@@ -60,7 +60,7 @@ A extensão segue a especificação **Manifest V3** do Google Chrome:
 
 ## 💾 Configuração do Banco de Dados (Supabase)
 
-Execute o arquivo [schema.sql](file:///home/angelorosa/Documentos/0 - CV-PTF/autofill-form-chrome-extension/schema.sql) no Editor SQL do seu projeto do Supabase. Ele irá:
+Execute o arquivo [schema.sql](schema.sql) no Editor SQL do seu projeto do Supabase. Ele irá:
 
 1. Habilitar a extensão de vetores (`vector`).
 2. Criar a tabela `perfil_profissional` para guardar as informações densas sobre você.
@@ -93,4 +93,4 @@ Execute o arquivo [schema.sql](file:///home/angelorosa/Documentos/0 - CV-PTF/aut
 
 ## 📄 Licença
 
-Este projeto está licenciado sob a licença MIT. Consulte o arquivo [LICENSE](file:///home/angelorosa/Documentos/0 - CV-PTF/autofill-form-chrome-extension/LICENSE) para obter mais informações.
+Este projeto está licenciado sob a licença MIT. Consulte o arquivo [LICENSE](LICENSE) para obter mais informações.
