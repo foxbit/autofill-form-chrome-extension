@@ -1,0 +1,45 @@
+{
+  "manifest_version": 3,
+  "name": "Recrutamento Autofill IA",
+  "version": "1.0",
+  "description": "Autopreenchimento inteligente para formulários de recrutamento usando Supabase e Google Gemini.",
+  "permissions": [
+    "storage",
+    "tabs",
+    "activeTab",
+    "scripting",
+    "sidePanel"
+  ],
+  "host_permissions": [
+    "https://*.supabase.co/",
+    "https://generativelanguage.googleapis.com/",
+    "*://*/*"
+  ],
+  "action": {
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
+  },
+  "side_panel": {
+    "default_path": "popup.html"
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["utils/dom-parser.js", "utils/form-filler.js", "content.js"],
+      "css": ["styles/content.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "icons": {
+    "16": "icons/icon-16.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  }
+}

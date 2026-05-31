@@ -1,0 +1,8 @@
+# Credenciais e chaves privadas
+APIs.txt
+.env
+*.pem
+
+# Sistema operacional
+.DS_Store
+Thumbs.db

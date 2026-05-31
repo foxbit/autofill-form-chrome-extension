@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Recrutamento Autofill IA</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="logo-area">
+        <div class="logo-icon">A</div>
+        <div class="logo-text">
+          <h1>Autofill IA</h1>
+          <span class="logo-version">v1.0</span>
+        </div>
+      </div>
+      <!-- Status Badges -->
+      <div class="status-indicators">
+        <span id="supabase-status" class="status-badge offline" title="Supabase">S</span>
+        <span id="gemini-status" class="status-badge offline" title="Gemini">G</span>
+      </div>
+    </header>
+
+    <!-- Navigation Tabs -->
+    <nav class="app-nav">
+      <button class="nav-tab active" data-tab="tab-autofill">Preencher</button>
+      <button class="nav-tab" data-tab="tab-files">Arquivos</button>
+      <button class="nav-tab" data-tab="tab-settings">Ajustes</button>
+    </nav>
+
+    <!-- Main Content Area -->
+    <main class="app-content">
+      
+      <!-- Tab: Autofill -->
+      <section id="tab-autofill" class="tab-panel active">
+        <div class="panel-card">
+          <h2>Preencher Formulário</h2>
+          <p class="description">Analise a página atual e preencha as respostas automaticamente com IA.</p>
+          
+          <div class="stats-box">
+            <div class="stat-item">
+              <span class="stat-value" id="fields-count">-</span>
+              <span class="stat-label">Campos Detectados</span>
+            </div>
+            <div class="stat-item">
+              <span class="stat-value" id="required-count">-</span>
+              <span class="stat-label">Obrigatórios</span>
+            </div>
+          </div>
+
+          <div id="no-active-tab-warning" class="warning-box hidden">
+            Acesse uma página da web ativa para usar a extensão.
+          </div>
+
+          <div class="actions-group">
+            <button id="btn-scan" class="btn btn-secondary">Buscar Campos</button>
+            <button id="btn-autofill" class="btn btn-primary" disabled>
+              <span class="btn-text">Autopreencher</span>
+              <span class="spinner hidden"></span>
+            </button>
+          </div>
+        </div>
+
+        <div id="autofill-log-container" class="panel-card log-card hidden">
+          <h3>Log de Preenchimento</h3>
+          <div id="autofill-log" class="log-list"></div>
+        </div>
+      </section>
+
+
+
+      <!-- Tab: Files -->
+      <section id="tab-files" class="tab-panel">
+        <div class="panel-card">
+          <h2>Currículo & Carta de Apresentação</h2>
+          <p class="description">Faça upload dos seus arquivos em formato PDF para que sejam injetados automaticamente nos campos de anexo.</p>
+          
+          <!-- File 1: CV -->
+          <div class="file-upload-box">
+            <div class="file-info">
+              <span class="file-title">Currículo (CV)</span>
+              <span id="cv-status" class="file-meta">Não enviado</span>
+            </div>
+            <label class="file-input-label btn btn-secondary">
+              Selecionar PDF
+              <input type="file" id="input-cv" accept="application/pdf" class="hidden">
+            </label>
+          </div>
+
+          <!-- File 2: Cover Letter -->
+          <div class="file-upload-box">
+            <div class="file-info">
+              <span class="file-title">Carta de Apresentação</span>
+              <span id="cl-status" class="file-meta">Não enviada</span>
+            </div>
+            <label class="file-input-label btn btn-secondary">
+              Selecionar PDF
+              <input type="file" id="input-cl" accept="application/pdf" class="hidden">
+            </label>
+          </div>
+
+          <div id="upload-feedback" class="feedback-box hidden"></div>
+        </div>
+      </section>
+
+      <!-- Tab: Settings -->
+      <section id="tab-settings" class="tab-panel">
+        <div class="panel-card">
+          <h2>Configuração de APIs</h2>
+          <p class="description">Configure os dados de acesso para o seu banco Supabase e chave do Google Gemini.</p>
+          
+          <form id="settings-form" class="settings-form">
+            <div class="input-group">
+              <label for="set-supabase-url">Supabase Project URL</label>
+              <input type="url" id="set-supabase-url" required placeholder="https://xxxx.supabase.co">
+            </div>
+
+            <div class="input-group">
+              <label for="set-supabase-anon">Supabase Anon (Public) Key</label>
+              <input type="password" id="set-supabase-anon" required placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6...">
+            </div>
+
+            <div class="input-group">
+              <label for="set-supabase-service">Supabase Service Role Key</label>
+              <input type="password" id="set-supabase-service" required placeholder="Chave com privilégio de escrita...">
+            </div>
+
+            <div class="input-group">
+              <label for="set-gemini-key">Google Gemini API Key</label>
+              <input type="password" id="set-gemini-key" required placeholder="Chave do AI Studio...">
+            </div>
+
+            <div class="input-group">
+              <label for="set-gemini-model">Modelo do Gemini</label>
+              <select id="set-gemini-model">
+                <option value="gemini-3.5-flash" selected>Gemini 3.5 Flash (Recomendado)</option>
+                <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
+                <option value="gemini-2.0-flash-lite-preview-02-05">Gemini 2.0 Flash Lite</option>
+                <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
+                <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
+              </select>
+            </div>
+
+            <button type="submit" id="btn-save-settings" class="btn btn-primary w-full mt-8">
+              <span class="btn-text">Validar & Salvar</span>
+              <span class="spinner hidden"></span>
+            </button>
+          </form>
+
+          <div id="settings-feedback" class="feedback-box hidden"></div>
+        </div>
+      </section>
+
+    </main>
+
+    <!-- Global Toast Notifications -->
+    <div id="toast" class="toast hidden"></div>
+  </div>
+
+  <script type="module" src="popup.js"></script>
+</body>
+</html>
