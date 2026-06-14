@@ -21,7 +21,9 @@ export const storageManager = {
       'openrouterModel',
       // Ollama
       'ollamaUrl',
-      'ollamaModel'
+      'ollamaModel',
+      // Autofill language
+      'targetLanguage'
     ]);
   },
 
@@ -44,7 +46,9 @@ export const storageManager = {
       openrouterModel:    keys.openrouterModel    || 'openai/gpt-4o-mini',
       // Ollama
       ollamaUrl:          keys.ollamaUrl          || 'http://localhost:11434',
-      ollamaModel:        keys.ollamaModel        || 'llama3.2'
+      ollamaModel:        keys.ollamaModel        || 'llama3.2',
+      // Autofill language
+      targetLanguage:     keys.targetLanguage     || 'pt'
     });
   },
 
@@ -62,7 +66,8 @@ export const storageManager = {
       'openrouterApiKey',
       'openrouterModel',
       'ollamaUrl',
-      'ollamaModel'
+      'ollamaModel',
+      'targetLanguage'
     ]);
   }
 };

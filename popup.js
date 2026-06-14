@@ -11,6 +11,7 @@ let detectedModifications = [];
 document.addEventListener('DOMContentLoaded', async () => {
   initTabs();
   initProviderTabs();
+  await initLangSelector();
   await loadCredentials();
   await checkConnectionStatus();
   
@@ -44,6 +45,29 @@ function initTabs() {
       tab.classList.add('active');
       const panelId = tab.getAttribute('data-tab');
       document.getElementById(panelId).classList.add('active');
+    });
+  });
+}
+
+/**
+ * Initializes the language selector in the Autofill tab.
+ * Reads saved language from storage and persists changes.
+ */
+async function initLangSelector() {
+  const keys = await storageManager.getKeys();
+  const saved = keys.targetLanguage || 'pt';
+
+  const btns = document.querySelectorAll('.lang-btn');
+  btns.forEach(btn => {
+    // Reflect saved state
+    btn.classList.toggle('active', btn.getAttribute('data-lang') === saved);
+
+    btn.addEventListener('click', async () => {
+      const lang = btn.getAttribute('data-lang');
+      btns.forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      // Persist immediately
+      await storageManager.setKeys({ ...(await storageManager.getKeys()), targetLanguage: lang });
     });
   });
 }
@@ -268,7 +292,10 @@ async function runAutofill() {
     
     const response = await chrome.runtime.sendMessage({
       type: 'AUTOFILL_FIELDS',
-      payload: { fields: scannedFields }
+      payload: {
+        fields: scannedFields,
+        targetLanguage: document.querySelector('.lang-btn.active')?.getAttribute('data-lang') || 'pt'
+      }
     });
 
     logList.innerHTML = '';

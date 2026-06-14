@@ -154,6 +154,48 @@ window.domParser = {
   },
 
   /**
+   * Detects if an input is a combobox / autocomplete that opens a dropdown.
+   * These should be ignored — filling them triggers dropdown UI and we cannot reliably select an option.
+   * @param {HTMLElement} el
+   * @returns {boolean}
+   */
+  isCombobox(el) {
+    // Explicit ARIA role
+    if (el.getAttribute('role') === 'combobox') return true;
+
+    // aria-haspopup signals that typing opens a popup list
+    const haspopup = el.getAttribute('aria-haspopup');
+    if (haspopup && haspopup !== 'false') return true;
+
+    // aria-autocomplete="list" or "both" — opens suggestion list
+    const autocomplete = el.getAttribute('aria-autocomplete');
+    if (autocomplete === 'list' || autocomplete === 'both') return true;
+
+    // HTML datalist attached via list= attribute
+    if (el.getAttribute('list')) return true;
+
+    // Parent element has role="combobox" (common pattern in custom components)
+    const parentCombo = el.closest('[role="combobox"]');
+    if (parentCombo && parentCombo !== el) return true;
+
+    // autocomplete attribute set to a specific named list (not on/off/name/email etc.)
+    // Some platforms use this to link server-side autocomplete
+    const nativeAC = (el.getAttribute('autocomplete') || '').toLowerCase();
+    // Skip if class/id hints combobox (common in Greenhouse, Lever, Workday)
+    const classStr = (el.className || '').toLowerCase();
+    const idStr = (el.id || '').toLowerCase();
+    if (
+      classStr.includes('combobox') ||
+      classStr.includes('autocomplete') ||
+      classStr.includes('typeahead') ||
+      idStr.includes('combobox') ||
+      idStr.includes('autocomplete')
+    ) return true;
+
+    return false;
+  },
+
+  /**
    * Scrapes all visible inputs and groups them as logical questions
    * @returns {object[]} List of identified form fields
    */
@@ -169,6 +211,9 @@ window.domParser = {
       // Skip non-text input types
       const skipTypes = ['hidden', 'submit', 'button', 'image', 'radio', 'checkbox'];
       if (skipTypes.includes(el.type)) continue;
+
+      // Skip comboboxes / autocomplete inputs — filling them opens dropdown UI
+      if (el.tagName === 'INPUT' && this.isCombobox(el)) continue;
 
       const id = el.id || `field-${Math.random().toString(36).substr(2, 9)}`;
       el.id = id; // Ensure element has id for reference

@@ -68,13 +68,14 @@ export class LLMClient {
    * Generates answers for multiple fields in a single API call.
    * @param {Array} fields
    * @param {Array} profileItems
+   * @param {string} [targetLanguage='pt'] - 'pt' | 'en' | 'es'
    * @returns {Promise<Array<{fieldId: string, value: string}>>}
    */
-  async generateAnswersBatch(fields, profileItems) {
+  async generateAnswersBatch(fields, profileItems, targetLanguage = 'pt') {
     switch (this.provider) {
-      case 'gemini':      return this._geminiGenerateBatch(fields, profileItems);
-      case 'openrouter':  return this._openrouterGenerateBatch(fields, profileItems);
-      case 'ollama':      return this._ollamaGenerateBatch(fields, profileItems);
+      case 'gemini':      return this._geminiGenerateBatch(fields, profileItems, targetLanguage);
+      case 'openrouter':  return this._openrouterGenerateBatch(fields, profileItems, targetLanguage);
+      case 'ollama':      return this._ollamaGenerateBatch(fields, profileItems, targetLanguage);
       default:            throw new Error(`Provedor desconhecido: ${this.provider}`);
     }
   }
@@ -83,7 +84,16 @@ export class LLMClient {
   // SHARED PROMPT BUILDER
   // ─────────────────────────────────────────────
 
-  _buildBatchPrompt(fields, profileItems) {
+  /**
+   * Builds the batch prompt for all providers.
+   * @param {Array} fields
+   * @param {Array} profileItems
+   * @param {string} targetLanguage - 'pt' | 'en' | 'es'
+   */
+  _buildBatchPrompt(fields, profileItems, targetLanguage = 'pt') {
+    const languageNames = { pt: 'Português (PT-BR)', en: 'English', es: 'Español' };
+    const languageName = languageNames[targetLanguage] || 'Português (PT-BR)';
+
     const formattedContext = profileItems
       .map(item => `--- SEÇÃO: ${item.secao} (${item.titulo_bloco}) ---\n${item.conteudo}`)
       .join('\n\n');
@@ -105,13 +115,13 @@ LISTA DE CAMPOS A PREENCHER:
 ${fieldsDescription}
 
 INSTRUÇÕES DE PREENCHIMENTO:
-1. Responda sempre no mesmo idioma em que a pergunta do campo foi formulada (ex: pergunta em inglês -> resposta em inglês).
+1. **IDIOMA OBRIGATÓRIO**: Responda SEMPRE em ${languageName}. Não use nenhum outro idioma, independentemente do idioma da pergunta.
 2. Seja coerente com o perfil do candidato. Não invente informações falsas.
 3. Para campos 'text' (texto curto):
    - Se for um campo factual (nome, email, telefone, linkedin, localidade, CEP, etc.), retorne APENAS o valor limpo. Não use pronomes em primeira pessoa, não construa frases completas e não adicione pontuação final.
    - Se for uma pergunta aberta curta, responda de forma direta e concisa (máximo 1 frase).
 4. Para campos 'textarea' (texto longo):
-   - Responda detalhadamente em primeira pessoa ("eu"), citando conquistas, projetos e métricas do perfil.
+   - Responda detalhadamente em primeira pessoa ("eu"/"I"/"Yo" conforme o idioma), citando conquistas, projetos e métricas do perfil.
 5. Respeite o limite 'Caracteres Máximos' se especificado.
 
 Você deve responder SOMENTE com o JSON abaixo, sem texto adicional antes ou depois:
@@ -201,9 +211,9 @@ Você deve responder SOMENTE com o JSON abaixo, sem texto adicional antes ou dep
     return data.embedding.values;
   }
 
-  async _geminiGenerateBatch(fields, profileItems) {
+  async _geminiGenerateBatch(fields, profileItems, targetLanguage = 'pt') {
     const url = `${this._geminiBaseUrl}/models/${this.modelName}:generateContent?key=${this.config.apiKey}`;
-    const prompt = this._buildBatchPrompt(fields, profileItems);
+    const prompt = this._buildBatchPrompt(fields, profileItems, targetLanguage);
 
     const res = await fetch(url, {
       method: 'POST',
@@ -299,8 +309,8 @@ Você deve responder SOMENTE com o JSON abaixo, sem texto adicional antes ou dep
     }
   }
 
-  async _openrouterGenerateBatch(fields, profileItems) {
-    const prompt = this._buildBatchPrompt(fields, profileItems);
+  async _openrouterGenerateBatch(fields, profileItems, targetLanguage = 'pt') {
+    const prompt = this._buildBatchPrompt(fields, profileItems, targetLanguage);
 
     const res = await fetch(`${this._openrouterBaseUrl}/chat/completions`, {
       method: 'POST',
@@ -365,8 +375,8 @@ Você deve responder SOMENTE com o JSON abaixo, sem texto adicional antes ou dep
     }
   }
 
-  async _ollamaGenerateBatch(fields, profileItems) {
-    const prompt = this._buildBatchPrompt(fields, profileItems);
+  async _ollamaGenerateBatch(fields, profileItems, targetLanguage = 'pt') {
+    const prompt = this._buildBatchPrompt(fields, profileItems, targetLanguage);
 
     const res = await fetch(`${this._ollamaBaseUrl}/api/chat`, {
       method: 'POST',

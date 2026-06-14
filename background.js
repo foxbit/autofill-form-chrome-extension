@@ -157,7 +157,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
 
         case 'AUTOFILL_FIELDS': {
-          const { fields } = message.payload;
+          const { fields, targetLanguage = 'pt' } = message.payload;
           const debugLogs = [];
 
           try {
@@ -231,28 +231,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
             // 4. Batch generate answers using the LLM
             if (fieldsToGenerate.length > 0) {
-              debugLogs.push(`Solicitando resposta da IA para ${fieldsToGenerate.length} campos...`);
+              debugLogs.push(`Solicitando resposta da IA para ${fieldsToGenerate.length} campos... [Idioma: ${targetLanguage.toUpperCase()}]`);
               try {
-                const batchResults = await llm.generateAnswersBatch(fieldsToGenerate, profile);
+                const batchResults = await llm.generateAnswersBatch(fieldsToGenerate, profile, targetLanguage);
                 debugLogs.push(`IA respondeu com sucesso para os campos pendentes.`);
 
                 batchResults.forEach(res => {
                   const field = fieldsToGenerate.find(f => f.id === res.fieldId);
                   if (field) {
-                    const isEnglish = /[a-zA-Z]/g.test(field.question) &&
-                      (field.question.toLowerCase().includes('why') ||
-                       field.question.toLowerCase().includes('what') ||
-                       field.question.toLowerCase().includes('resume') ||
-                       field.question.toLowerCase().includes('salary') ||
-                       field.question.toLowerCase().includes('experience'));
-                    const language = isEnglish ? 'en' : 'pt';
-
                     results.push({
                       fieldId: field.id,
                       type: field.type,
                       value: res.value,
                       source: `${llm.provider}_generation`,
-                      language,
+                      language: targetLanguage,
                       embedding: fieldEmbeddings[field.id] || null
                     });
                     debugLogs.push(`[IA] Campo "${field.question}" preenchido.`);
