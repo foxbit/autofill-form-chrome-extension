@@ -33,30 +33,7 @@ function captureValues(fields) {
   const values = {};
   fields.forEach(field => {
     try {
-      if (field.type === 'radio') {
-        const checkedOpt = field.optionElements.find(opt => {
-          const el = document.getElementById(opt.elementId);
-          return el && el.checked;
-        });
-        values[field.id] = checkedOpt ? checkedOpt.text : '';
-      } else if (field.type === 'checkbox') {
-        if (field.standalone) {
-          const el = document.getElementById(field.elementIds[0]);
-          values[field.id] = el ? el.checked : false;
-        } else {
-          const checkedTexts = field.optionElements
-            .filter(opt => {
-              const el = document.getElementById(opt.elementId);
-              return el && el.checked;
-            })
-            .map(opt => opt.text);
-          values[field.id] = checkedTexts.join(', ');
-        }
-      } else if (field.type === 'select') {
-        const el = document.getElementById(field.elementIds[0]);
-        values[field.id] = el && el.selectedIndex >= 0 ? el.options[el.selectedIndex].text : '';
-      } else if (field.type === 'file') {
-        // We don't store actual file data in local memory values, just check if it has files
+      if (field.type === 'file') {
         const el = document.getElementById(field.elementIds[0]);
         values[field.id] = el && el.files && el.files.length > 0 ? el.files[0].name : '';
       } else {
@@ -197,29 +174,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 function highlightEmptyRequiredFields(fields) {
   fields.forEach(field => {
     let isEmpty = false;
-    
+
     try {
-      if (field.type === 'radio') {
-        const checkedOpt = field.optionElements.find(opt => {
-          const el = document.getElementById(opt.elementId);
-          return el && el.checked;
-        });
-        isEmpty = !checkedOpt;
-      } else if (field.type === 'checkbox') {
-        if (field.standalone) {
-          const el = document.getElementById(field.elementIds[0]);
-          isEmpty = !el || !el.checked;
-        } else {
-          const checked = field.optionElements.some(opt => {
-            const el = document.getElementById(opt.elementId);
-            return el && el.checked;
-          });
-          isEmpty = !checked;
-        }
-      } else if (field.type === 'select') {
-        const el = document.getElementById(field.elementIds[0]);
-        isEmpty = !el || el.selectedIndex < 0 || !el.value || el.value.trim() === '';
-      } else if (field.type === 'file') {
+      if (field.type === 'file') {
         const el = document.getElementById(field.elementIds[0]);
         isEmpty = !el || !el.files || el.files.length === 0;
       } else {
@@ -242,9 +199,7 @@ function highlightEmptyRequiredFields(fields) {
     } else {
       field.elementIds.forEach(id => {
         const el = document.getElementById(id);
-        if (el) {
-          el.classList.remove('autofill-failed');
-        }
+        if (el) el.classList.remove('autofill-failed');
       });
     }
   });
@@ -318,39 +273,11 @@ document.addEventListener('change', (e) => {
 
 function getFieldCurrentValue(field) {
   try {
-    if (field.type === 'radio') {
-      const checkedOpt = field.optionElements.find(opt => {
-        const el = document.getElementById(opt.elementId);
-        return el && el.checked;
-      });
-      return checkedOpt ? checkedOpt.text : '';
-    } else if (field.type === 'checkbox') {
-      if (field.standalone) {
-        const el = document.getElementById(field.elementIds[0]);
-        return el && el.checked ? 'Sim' : '';
-      } else {
-        const checkedTexts = field.optionElements
-          .filter(opt => {
-            const el = document.getElementById(opt.elementId);
-            return el && el.checked;
-          })
-          .map(opt => opt.text);
-        return checkedTexts.join(', ');
-      }
-    } else if (field.type === 'select') {
-      const el = document.getElementById(field.elementIds[0]);
-      if (!el || el.selectedIndex < 0) return '';
-      const text = el.options[el.selectedIndex].text;
-      if (!el.value || el.value.trim() === '' || text.toLowerCase().includes('selecione') || text.toLowerCase().includes('select')) {
-        return '';
-      }
-      return text;
-    } else if (field.type === 'file') {
+    if (field.type === 'file') {
       return '';
-    } else {
-      const el = document.getElementById(field.elementIds[0]);
-      return el ? el.value.trim() : '';
     }
+    const el = document.getElementById(field.elementIds[0]);
+    return el ? el.value.trim() : '';
   } catch (err) {
     console.warn(`Error getting value for field: ${field.question}`, err);
     return '';

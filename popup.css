@@ -500,3 +500,147 @@ body {
 .mt-8 { margin-top: 8px; }
 .mt-12 { margin-top: 12px; }
 .w-full { width: 100%; }
+
+/* ── LLM Provider Selector ── */
+.settings-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 6px 0 2px;
+}
+
+.settings-divider span {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  white-space: nowrap;
+}
+
+.settings-divider::before,
+.settings-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border-color);
+}
+
+/* Provider tab buttons */
+.provider-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+  background-color: rgba(15, 23, 42, 0.5);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 4px;
+}
+
+.provider-tab {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 7px 4px;
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.provider-tab:hover {
+  color: var(--text-main);
+  background-color: rgba(255, 255, 255, 0.04);
+}
+
+.provider-tab.active {
+  background: linear-gradient(135deg, rgba(99,102,241,0.25) 0%, rgba(79,70,229,0.2) 100%);
+  color: #a5b4fc;
+  border: 1px solid rgba(99,102,241,0.35);
+  box-shadow: 0 2px 8px rgba(99,102,241,0.15);
+}
+
+.provider-tab-icon {
+  font-size: 12px;
+}
+
+/* Provider content sections */
+.provider-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  animation: fadeIn 0.2s ease-out;
+}
+
+/* Contextual notes inside provider sections */
+.provider-note {
+  font-size: 11px;
+  line-height: 1.5;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+}
+
+.provider-note code {
+  font-family: monospace;
+  font-size: 10px;
+  background: rgba(0,0,0,0.3);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+.provider-note.info {
+  background-color: rgba(99, 102, 241, 0.1);
+  border: 1px solid rgba(99, 102, 241, 0.2);
+  color: #a5b4fc;
+}
+
+.provider-note.warn {
+  background-color: rgba(245, 158, 11, 0.08);
+  border: 1px solid rgba(245, 158, 11, 0.25);
+  color: #fcd34d;
+}
+
+/* Label link (e.g. "Obter chave →") */
+.input-group {
+  position: relative;
+}
+
+.label-link {
+  position: absolute;
+  right: 0;
+  top: 0;
+  font-size: 10px;
+  color: var(--primary);
+  text-decoration: none;
+  font-weight: 600;
+  transition: var(--transition);
+}
+
+.label-link:hover {
+  color: #a5b4fc;
+  text-decoration: underline;
+}
+
+/* Model select + refresh button row */
+.model-select-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.model-select-row select {
+  flex: 1;
+}
+
+/* Small button variant */
+.btn-sm {
+  font-size: 14px;
+  padding: 8px 10px;
+  min-width: 36px;
+}
+

@@ -11,8 +11,17 @@ export const storageManager = {
       'supabaseUrl',
       'supabaseAnonKey',
       'supabaseServiceKey',
+      // LLM provider selection
+      'llmProvider',      // 'gemini' | 'openrouter' | 'ollama'
+      // Gemini
       'geminiApiKey',
-      'geminiModelName'
+      'geminiModelName',
+      // OpenRouter
+      'openrouterApiKey',
+      'openrouterModel',
+      // Ollama
+      'ollamaUrl',
+      'ollamaModel'
     ]);
   },
 
@@ -22,11 +31,20 @@ export const storageManager = {
    */
   async setKeys(keys) {
     await chrome.storage.local.set({
-      supabaseUrl: keys.supabaseUrl || '',
-      supabaseAnonKey: keys.supabaseAnonKey || '',
+      supabaseUrl:        keys.supabaseUrl        || '',
+      supabaseAnonKey:    keys.supabaseAnonKey    || '',
       supabaseServiceKey: keys.supabaseServiceKey || '',
-      geminiApiKey: keys.geminiApiKey || '',
-      geminiModelName: keys.geminiModelName || 'gemini-3.5-flash'
+      // LLM provider
+      llmProvider:        keys.llmProvider        || 'gemini',
+      // Gemini
+      geminiApiKey:       keys.geminiApiKey       || '',
+      geminiModelName:    keys.geminiModelName    || 'gemini-2.0-flash',
+      // OpenRouter
+      openrouterApiKey:   keys.openrouterApiKey   || '',
+      openrouterModel:    keys.openrouterModel    || 'openai/gpt-4o-mini',
+      // Ollama
+      ollamaUrl:          keys.ollamaUrl          || 'http://localhost:11434',
+      ollamaModel:        keys.ollamaModel        || 'llama3.2'
     });
   },
 
@@ -38,8 +56,13 @@ export const storageManager = {
       'supabaseUrl',
       'supabaseAnonKey',
       'supabaseServiceKey',
+      'llmProvider',
       'geminiApiKey',
-      'geminiModelName'
+      'geminiModelName',
+      'openrouterApiKey',
+      'openrouterModel',
+      'ollamaUrl',
+      'ollamaModel'
     ]);
   }
 };

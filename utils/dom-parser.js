@@ -159,161 +159,26 @@ window.domParser = {
    */
   parseForm() {
     const fields = [];
-    const processedRadioNames = new Set();
-    const processedCheckboxNames = new Set();
 
-    // Query all standard input elements
-    const elements = Array.from(document.querySelectorAll('input, textarea, select'));
+    // Query only text inputs, textareas and file inputs — skip select, radio, checkbox
+    const elements = Array.from(document.querySelectorAll('input, textarea'));
 
     for (const el of elements) {
       if (!this.isVisible(el)) continue;
-      if (el.type === 'hidden' || el.type === 'submit' || el.type === 'button' || el.type === 'image') continue;
+
+      // Skip non-text input types
+      const skipTypes = ['hidden', 'submit', 'button', 'image', 'radio', 'checkbox'];
+      if (skipTypes.includes(el.type)) continue;
 
       const id = el.id || `field-${Math.random().toString(36).substr(2, 9)}`;
       el.id = id; // Ensure element has id for reference
 
-      const isRequired = el.hasAttribute('required') || 
-                         el.getAttribute('aria-required') === 'true' || 
+      const isRequired = el.hasAttribute('required') ||
+                         el.getAttribute('aria-required') === 'true' ||
                          el.className.includes('required') ||
                          !!el.closest('.required');
 
       const maxLength = el.maxLength > 0 ? el.maxLength : null;
-
-      // Handle Radio Buttons
-      if (el.type === 'radio') {
-        const name = el.name;
-        if (!name) continue;
-        if (processedRadioNames.has(name)) continue;
-        processedRadioNames.add(name);
-
-        // Find all radio elements in this group
-        const group = Array.from(document.querySelectorAll(`input[type="radio"][name="${CSS.escape(name)}"]`));
-        const options = [];
-        
-        // Find group question (usually legend or parent label)
-        let question = '';
-        const fieldset = el.closest('fieldset');
-        if (fieldset) {
-          const legend = fieldset.querySelector('legend');
-          if (legend) question = legend.innerText;
-        }
-        if (!question) {
-          question = this.getQuestion(el);
-        }
-
-        // Gather options and map to elements
-        group.forEach(radio => {
-          const optionLabel = this.getOptionLabel(radio);
-          if (optionLabel) {
-            options.push({
-              text: optionLabel,
-              elementId: radio.id
-            });
-          }
-        });
-
-        if (options.length > 0) {
-          fields.push({
-            id: name,
-            type: 'radio',
-            question: this.cleanQuestion(question),
-            options: options.map(o => o.text),
-            optionElements: options, // Array of { text, elementId }
-            required: isRequired,
-            elementIds: group.map(r => r.id)
-          });
-        }
-        continue;
-      }
-
-      // Handle Checkboxes (can be standalone or grouped)
-      if (el.type === 'checkbox') {
-        const name = el.name;
-        
-        // Standalone checkbox (e.g. Accept terms)
-        if (!name) {
-          const question = this.getQuestion(el);
-          fields.push({
-            id: id,
-            type: 'checkbox',
-            question: this.cleanQuestion(question),
-            required: isRequired,
-            elementIds: [id],
-            standalone: true
-          });
-          continue;
-        }
-
-        if (processedCheckboxNames.has(name)) continue;
-        processedCheckboxNames.add(name);
-
-        const group = Array.from(document.querySelectorAll(`input[type="checkbox"][name="${CSS.escape(name)}"]`));
-        
-        if (group.length === 1) {
-          // Single named checkbox
-          const question = this.getQuestion(el);
-          fields.push({
-            id: id,
-            type: 'checkbox',
-            question: this.cleanQuestion(question),
-            required: isRequired,
-            elementIds: [id],
-            standalone: true
-          });
-        } else {
-          // Multiple choice checkbox group
-          let question = '';
-          const fieldset = el.closest('fieldset');
-          if (fieldset) {
-            const legend = fieldset.querySelector('legend');
-            if (legend) question = legend.innerText;
-          }
-          if (!question) {
-            question = this.getQuestion(el);
-          }
-
-          const options = [];
-          group.forEach(checkbox => {
-            const optionLabel = this.getOptionLabel(checkbox);
-            if (optionLabel) {
-              options.push({
-                text: optionLabel,
-                elementId: checkbox.id
-              });
-            }
-          });
-
-          fields.push({
-            id: name,
-            type: 'checkbox',
-            question: this.cleanQuestion(question),
-            options: options.map(o => o.text),
-            optionElements: options,
-            required: isRequired,
-            elementIds: group.map(c => c.id),
-            standalone: false
-          });
-        }
-        continue;
-      }
-
-      // Handle Select Dropdowns
-      if (el.tagName === 'SELECT') {
-        const question = this.getQuestion(el);
-        const options = Array.from(el.options)
-          .map(opt => opt.text.trim())
-          .filter(txt => txt && !txt.includes('selecione') && !txt.includes('select') && txt !== '---' && txt !== '');
-
-        fields.push({
-          id: id,
-          type: 'select',
-          question: question,
-          options: options,
-          required: isRequired,
-          elementIds: [id]
-        });
-        continue;
-      }
 
       // Handle File Uploads
       if (el.type === 'file') {

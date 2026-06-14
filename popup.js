@@ -10,6 +10,7 @@ let detectedModifications = [];
 
 document.addEventListener('DOMContentLoaded', async () => {
   initTabs();
+  initProviderTabs();
   await loadCredentials();
   await checkConnectionStatus();
   
@@ -20,6 +21,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   
   document.getElementById('input-cv').addEventListener('change', (e) => handleFileUpload(e, 'cv.pdf', 'cv-status'));
   document.getElementById('input-cl').addEventListener('change', (e) => handleFileUpload(e, 'carta_apresentacao.pdf', 'cl-status'));
+
+  // Ollama refresh button
+  document.getElementById('btn-ollama-refresh').addEventListener('click', () => {
+    const ollamaUrl = document.getElementById('set-ollama-url').value.trim() || 'http://localhost:11434';
+    refreshOllamaModels(ollamaUrl);
+  });
 
   // Also query if file states exist on load
   await checkFileStatuses();
@@ -32,16 +39,60 @@ function initTabs() {
   const tabs = document.querySelectorAll('.nav-tab');
   tabs.forEach(tab => {
     tab.addEventListener('click', () => {
-      // Remove active from all tabs
       document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
       document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
-      
-      // Activate selected
       tab.classList.add('active');
       const panelId = tab.getAttribute('data-tab');
       document.getElementById(panelId).classList.add('active');
     });
   });
+}
+
+/**
+ * Initializes the LLM provider tab selector within the Settings form
+ */
+function initProviderTabs() {
+  const tabs = document.querySelectorAll('.provider-tab');
+  tabs.forEach(tab => {
+    tab.addEventListener('click', () => {
+      const provider = tab.getAttribute('data-provider');
+      switchProvider(provider);
+    });
+  });
+}
+
+/**
+ * Switches the visible provider section and updates the hidden input
+ */
+function switchProvider(provider) {
+  // Update tab styles
+  document.querySelectorAll('.provider-tab').forEach(t => {
+    t.classList.toggle('active', t.getAttribute('data-provider') === provider);
+  });
+
+  // Show/hide sections
+  ['gemini', 'openrouter', 'ollama'].forEach(p => {
+    const section = document.getElementById(`provider-section-${p}`);
+    if (section) section.classList.toggle('hidden', p !== provider);
+  });
+
+  // Store current provider
+  document.getElementById('set-llm-provider').value = provider;
+
+  // Update header badge label
+  updateLLMBadge(provider);
+}
+
+/**
+ * Updates the LLM status badge in the header to reflect the active provider
+ */
+function updateLLMBadge(provider) {
+  const badge = document.getElementById('gemini-status');
+  if (!badge) return;
+  const labels = { gemini: 'G', openrouter: 'OR', ollama: 'OL' };
+  const titles = { gemini: 'Gemini', openrouter: 'OpenRouter', ollama: 'Ollama Local' };
+  badge.textContent = labels[provider] || 'G';
+  badge.title = titles[provider] || 'IA';
 }
 
 /**
@@ -53,13 +104,34 @@ async function loadCredentials() {
   document.getElementById('set-supabase-url').value = keys.supabaseUrl || DEFAULT_SUPABASE_URL;
   document.getElementById('set-supabase-anon').value = keys.supabaseAnonKey || DEFAULT_SUPABASE_ANON;
   document.getElementById('set-supabase-service').value = keys.supabaseServiceKey || '';
-  document.getElementById('set-gemini-key').value = keys.geminiApiKey || '';
-  
-  const selectedModel = keys.geminiModelName || 'gemini-3.5-flash';
-  document.getElementById('set-gemini-model').value = selectedModel;
 
-  if (keys.geminiApiKey) {
-    await refreshModelDropdown(keys.geminiApiKey, selectedModel);
+  // LLM Provider
+  const provider = keys.llmProvider || 'gemini';
+  switchProvider(provider);
+
+  // Gemini
+  document.getElementById('set-gemini-key').value = keys.geminiApiKey || '';
+  const selectedGeminiModel = keys.geminiModelName || 'gemini-2.0-flash';
+  document.getElementById('set-gemini-model').value = selectedGeminiModel;
+  if (keys.geminiApiKey && provider === 'gemini') {
+    await refreshGeminiModels(keys.geminiApiKey, selectedGeminiModel);
+  }
+
+  // OpenRouter
+  document.getElementById('set-openrouter-key').value = keys.openrouterApiKey || '';
+  const selectedORModel = keys.openrouterModel || 'openai/gpt-4o-mini';
+  if (keys.openrouterApiKey && provider === 'openrouter') {
+    await refreshOpenRouterModels(keys.openrouterApiKey, selectedORModel);
+  } else {
+    document.getElementById('set-openrouter-model').value = selectedORModel;
+  }
+
+  // Ollama
+  document.getElementById('set-ollama-url').value = keys.ollamaUrl || 'http://localhost:11434';
+  const ollamaUrl = keys.ollamaUrl || 'http://localhost:11434';
+  const selectedOllamaModel = keys.ollamaModel || 'llama3.2';
+  if (provider === 'ollama') {
+    await refreshOllamaModels(ollamaUrl, selectedOllamaModel);
   }
 }
 
@@ -68,26 +140,24 @@ async function loadCredentials() {
  */
 async function checkConnectionStatus() {
   const sbBadge = document.getElementById('supabase-status');
-  const geminiBadge = document.getElementById('gemini-status');
+  const llmBadge = document.getElementById('gemini-status');
   
   try {
     const response = await chrome.runtime.sendMessage({ type: 'GET_STATUS' });
     if (response && response.connected) {
       sbBadge.className = 'status-badge online';
-      geminiBadge.className = 'status-badge online';
+      llmBadge.className = 'status-badge online';
       sbBadge.title = 'Supabase Conectado';
-      geminiBadge.title = 'Gemini Conectado';
       return true;
     } else {
       sbBadge.className = 'status-badge offline';
-      geminiBadge.className = 'status-badge offline';
+      llmBadge.className = 'status-badge offline';
       sbBadge.title = 'Supabase Desconectado';
-      geminiBadge.title = 'Gemini Desconectado';
       return false;
     }
   } catch (err) {
     sbBadge.className = 'status-badge offline';
-    geminiBadge.className = 'status-badge offline';
+    llmBadge.className = 'status-badge offline';
     return false;
   }
 }
@@ -96,14 +166,12 @@ async function checkConnectionStatus() {
  * Checks if PDF files exist in Supabase storage
  */
 async function checkFileStatuses() {
-  // Since we require keys to query storage, do a try check
   const keys = await storageManager.getKeys();
   if (!keys.supabaseUrl || !keys.supabaseAnonKey) return;
 
   const cvStatus = document.getElementById('cv-status');
   const clStatus = document.getElementById('cl-status');
 
-  // Helper to check file existence
   const checkFile = async (name, el) => {
     try {
       const url = `${keys.supabaseUrl}/storage/v1/object/authenticated/recruitment-files/${name}`;
@@ -153,7 +221,6 @@ async function scanActiveTabFields() {
     }
     warningBox.classList.add('hidden');
 
-    // Send scan request to content script
     const response = await chrome.tabs.sendMessage(tab.id, { type: 'GET_FORM_FIELDS' });
     
     if (response && response.success) {
@@ -190,7 +257,6 @@ async function runAutofill() {
   const logContainer = document.getElementById('autofill-log-container');
   const logList = document.getElementById('autofill-log');
 
-  // Loading state
   btnAutofill.disabled = true;
   btnText.classList.add('hidden');
   spinner.classList.remove('hidden');
@@ -200,16 +266,14 @@ async function runAutofill() {
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     
-    // 1. Get answers from background service worker
     const response = await chrome.runtime.sendMessage({
       type: 'AUTOFILL_FIELDS',
       payload: { fields: scannedFields }
     });
 
-    logList.innerHTML = ''; // Clear previous initial log
+    logList.innerHTML = '';
 
     if (response) {
-      // If we received debugLogs, render them first
       if (response.debugLogs && response.debugLogs.length > 0) {
         response.debugLogs.forEach(logLine => {
           const logItem = document.createElement('div');
@@ -219,28 +283,22 @@ async function runAutofill() {
           let tagText = '[Etapa]';
           
           if (logLine.startsWith('[Arquivo]')) {
-            tagClass = 'success';
-            tagText = '[Arquivo]';
+            tagClass = 'success'; tagText = '[Arquivo]';
             logLine = logLine.replace('[Arquivo] ', '');
           } else if (logLine.startsWith('[Histórico Exato]')) {
-            tagClass = 'success';
-            tagText = '[Exato]';
+            tagClass = 'success'; tagText = '[Exato]';
             logLine = logLine.replace('[Histórico Exato] ', '');
           } else if (logLine.startsWith('[Busca Semântica]')) {
-            tagClass = 'success';
-            tagText = '[Semântico]';
+            tagClass = 'success'; tagText = '[Semântico]';
             logLine = logLine.replace('[Busca Semântica] ', '');
           } else if (logLine.startsWith('[IA]')) {
-            tagClass = 'success';
-            tagText = '[IA]';
+            tagClass = 'success'; tagText = '[IA]';
             logLine = logLine.replace('[IA] ', '');
           } else if (logLine.startsWith('[Erro]')) {
-            tagClass = 'error';
-            tagText = '[Erro]';
+            tagClass = 'error'; tagText = '[Erro]';
             logLine = logLine.replace('[Erro] ', '');
           } else if (logLine.startsWith('[Erro IA]')) {
-            tagClass = 'error';
-            tagText = '[Erro IA]';
+            tagClass = 'error'; tagText = '[Erro IA]';
             logLine = logLine.replace('[Erro IA] ', '');
           }
           
@@ -259,7 +317,6 @@ async function runAutofill() {
           logList.appendChild(logItem);
           showToast('Concluído', 'Nenhum campo correspondente encontrado.', 'error');
         } else {
-          // 2. Inject answers in tab DOM
           const autofillRes = await chrome.tabs.sendMessage(tab.id, {
             type: 'AUTOFILL_FORM',
             payload: { results }
@@ -286,7 +343,7 @@ async function runAutofill() {
     const logItem = document.createElement('div');
     logItem.className = 'log-item';
     logItem.innerHTML = `<span class="log-tag error">[Erro Conexão]</span><span>Falha de comunicação: ${err.message}</span>`;
-    logList.appendChild(logItem);
+    document.getElementById('autofill-log').appendChild(logItem);
     showToast('Erro', 'Erro durante o autopreenchimento.', 'error');
   } finally {
     btnAutofill.disabled = false;
@@ -294,8 +351,6 @@ async function runAutofill() {
     spinner.classList.add('hidden');
   }
 }
-
-
 
 /**
  * Uploads a file (CV or cover letter) to Supabase Storage via background worker
@@ -319,7 +374,6 @@ async function handleFileUpload(event, fileName, statusElId) {
   reader.onload = async (e) => {
     const arrayBuffer = e.target.result;
     
-    // Convert ArrayBuffer to Base64 in popup to send via messaging
     const binary = new Uint8Array(arrayBuffer);
     let binaryStr = '';
     for (let i = 0; i < binary.byteLength; i++) {
@@ -339,9 +393,7 @@ async function handleFileUpload(event, fileName, statusElId) {
         keys.supabaseServiceKey
       );
 
-      // Convert base64 back to Blob in client or pass arrayBuffer if node/fetch supported
       const blob = new Blob([arrayBuffer], { type: file.type });
-      
       await client.uploadFile(fileName, blob, file.type);
 
       feedback.innerText = `Upload de ${file.name} concluído com sucesso!`;
@@ -389,19 +441,36 @@ async function saveSettings(event) {
   const supabaseUrl = document.getElementById('set-supabase-url').value.trim();
   const supabaseAnonKey = document.getElementById('set-supabase-anon').value.trim();
   const supabaseServiceKey = document.getElementById('set-supabase-service').value.trim();
+  const llmProvider = document.getElementById('set-llm-provider').value;
+
+  // Collect LLM-provider-specific config
   const geminiApiKey = document.getElementById('set-gemini-key').value.trim();
   const geminiModelName = document.getElementById('set-gemini-model').value;
+  const openrouterApiKey = document.getElementById('set-openrouter-key').value.trim();
+  const openrouterModel = document.getElementById('set-openrouter-model').value;
+  const ollamaUrl = document.getElementById('set-ollama-url').value.trim() || 'http://localhost:11434';
+  const ollamaModel = document.getElementById('set-ollama-model').value;
 
   try {
-    // 1. Test connections in background worker
     const response = await chrome.runtime.sendMessage({
       type: 'TEST_CONNECTIONS',
-      payload: { supabaseUrl, supabaseAnonKey, supabaseServiceKey, geminiApiKey, geminiModelName }
+      payload: {
+        supabaseUrl, supabaseAnonKey, supabaseServiceKey,
+        llmProvider,
+        geminiApiKey, geminiModelName,
+        openrouterApiKey, openrouterModel,
+        ollamaUrl, ollamaModel
+      }
     });
 
     if (response && response.success) {
-      // 2. If test passes, save credentials
-      await storageManager.setKeys({ supabaseUrl, supabaseAnonKey, supabaseServiceKey, geminiApiKey, geminiModelName });
+      await storageManager.setKeys({
+        supabaseUrl, supabaseAnonKey, supabaseServiceKey,
+        llmProvider,
+        geminiApiKey, geminiModelName,
+        openrouterApiKey, openrouterModel,
+        ollamaUrl, ollamaModel
+      });
       
       feedback.innerText = 'Configuração salva e validada com sucesso!';
       feedback.className = 'feedback-box success';
@@ -409,18 +478,21 @@ async function saveSettings(event) {
       
       showToast('Sucesso', 'Configurações de API salvas e conectadas!', 'success');
       
-      // Refresh live models dropdown
-      await refreshModelDropdown(geminiApiKey, geminiModelName);
+      // Refresh models for active provider
+      if (llmProvider === 'gemini' && geminiApiKey) {
+        await refreshGeminiModels(geminiApiKey, geminiModelName);
+      } else if (llmProvider === 'openrouter' && openrouterApiKey) {
+        await refreshOpenRouterModels(openrouterApiKey, openrouterModel);
+      } else if (llmProvider === 'ollama') {
+        await refreshOllamaModels(ollamaUrl, ollamaModel);
+      }
       
-      // Update status badges
       await checkConnectionStatus();
-      // Check file upload statuses too
       await checkFileStatuses();
     } else {
       feedback.innerText = `Falha na validação: ${response.error || 'Verifique as chaves e a conexão com a internet.'}`;
       feedback.className = 'feedback-box error';
       feedback.classList.remove('hidden');
-      
       showToast('Erro de Conexão', 'Não foi possível validar as chaves.', 'error');
     }
   } catch (err) {
@@ -443,53 +515,111 @@ function showToast(title, message, type = 'info') {
   toast.innerText = `${title}: ${message}`;
   toast.className = `toast ${type}`;
   toast.classList.remove('hidden');
-  
-  // Auto-hide after 3 seconds
-  setTimeout(() => {
-    toast.classList.add('hidden');
-  }, 3500);
+  setTimeout(() => { toast.classList.add('hidden'); }, 3500);
 }
 
+// ─────────────────────────────────────────────
+// MODEL REFRESH HELPERS
+// ─────────────────────────────────────────────
+
 /**
- * Fetches available Gemini models and populates the model dropdown
+ * Fetches available Gemini models and populates the Gemini model dropdown
  */
-async function refreshModelDropdown(apiKey, selectedModel) {
+async function refreshGeminiModels(apiKey, selectedModel) {
   const selectEl = document.getElementById('set-gemini-model');
   if (!apiKey) return;
 
   try {
     const response = await chrome.runtime.sendMessage({
       type: 'LIST_MODELS',
-      payload: { geminiApiKey: apiKey }
+      payload: { provider: 'gemini', geminiApiKey: apiKey }
     });
 
     if (response && response.success && response.models && response.models.length > 0) {
-      // Clear existing options
       selectEl.innerHTML = '';
-
-      // Populate new options
       response.models.forEach(model => {
         const option = document.createElement('option');
         option.value = model.name;
-        
-        let label = model.displayName;
-        if (model.name === 'gemini-3.5-flash') {
-          label += ' (Recomendado)';
-        }
-        option.innerText = label;
+        option.innerText = model.displayName + (model.name === 'gemini-2.0-flash' ? ' (Recomendado)' : '');
         option.title = model.description || '';
         selectEl.appendChild(option);
       });
-
-      // Restore selection if in list, otherwise select first/default
       const hasSelected = Array.from(selectEl.options).some(opt => opt.value === selectedModel);
-      if (hasSelected) {
-        selectEl.value = selectedModel;
-      } else {
-        selectEl.value = response.models[0].name;
-      }
+      selectEl.value = hasSelected ? selectedModel : (response.models[0]?.name || '');
     }
   } catch (err) {
-    console.warn('Erro ao atualizar lista de modelos da API:', err);
+    console.warn('Erro ao atualizar lista de modelos Gemini:', err);
+  }
+}
+
+/**
+ * Fetches available OpenRouter models and populates the OpenRouter model dropdown
+ */
+async function refreshOpenRouterModels(apiKey, selectedModel) {
+  const selectEl = document.getElementById('set-openrouter-model');
+  if (!apiKey) return;
+
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: 'LIST_MODELS',
+      payload: { provider: 'openrouter', openrouterApiKey: apiKey }
+    });
+
+    if (response && response.success && response.models && response.models.length > 0) {
+      selectEl.innerHTML = '';
+      response.models.forEach(model => {
+        const option = document.createElement('option');
+        option.value = model.name;
+        option.innerText = model.displayName;
+        option.title = model.description || '';
+        selectEl.appendChild(option);
+      });
+      const hasSelected = Array.from(selectEl.options).some(opt => opt.value === selectedModel);
+      selectEl.value = hasSelected ? selectedModel : (response.models[0]?.name || '');
+    }
+  } catch (err) {
+    console.warn('Erro ao atualizar lista de modelos OpenRouter:', err);
+  }
+}
+
+/**
+ * Fetches locally installed Ollama models and populates the Ollama model dropdown
+ */
+async function refreshOllamaModels(ollamaUrl, selectedModel) {
+  const selectEl = document.getElementById('set-ollama-model');
+  const refreshBtn = document.getElementById('btn-ollama-refresh');
+
+  if (refreshBtn) {
+    refreshBtn.disabled = true;
+    refreshBtn.innerText = '⟳';
+  }
+
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: 'LIST_MODELS',
+      payload: { provider: 'ollama', ollamaUrl }
+    });
+
+    if (response && response.success && response.models && response.models.length > 0) {
+      selectEl.innerHTML = '';
+      response.models.forEach(model => {
+        const option = document.createElement('option');
+        option.value = model.name;
+        option.innerText = model.displayName + (model.description ? ` (${model.description})` : '');
+        selectEl.appendChild(option);
+      });
+      const hasSelected = Array.from(selectEl.options).some(opt => opt.value === selectedModel);
+      selectEl.value = hasSelected ? selectedModel : (response.models[0]?.name || '');
+    } else {
+      showToast('Ollama', 'Nenhum modelo encontrado. Certifique-se que o Ollama está rodando.', 'error');
+    }
+  } catch (err) {
+    console.warn('Erro ao atualizar lista de modelos Ollama:', err);
+    showToast('Ollama', 'Não foi possível conectar ao servidor Ollama.', 'error');
+  } finally {
+    if (refreshBtn) {
+      refreshBtn.disabled = false;
+      refreshBtn.innerText = '↻';
+    }
   }
 }
