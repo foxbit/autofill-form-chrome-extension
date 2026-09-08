@@ -40,7 +40,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
 
         case 'AUTOFILL_FIELDS': {
-          const { fields } = message.payload;
+          const { fields, contexto = '' } = message.payload;
           const client = await getClient();
 
           // Mapeia o formato do content script (question) para o da API (label)
@@ -61,6 +61,24 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           const debugLogs = [
             `Máquina de Vagas API: ${results.length} campo(s) preenchido(s), ${unmatched.length} para revisão manual.`
           ];
+
+          // Auto-gera respostas para campos abertos não resolvidos (máx. 5)
+          let generated = 0;
+          for (const u of unmatched.slice(0, 5)) {
+            if (u.type === 'file') continue;
+            const lang = /[a-zA-Z]/.test(u.label) && !/[áéíóúâêôãõç]/.test(u.label) ? 'en' : 'pt';
+            try {
+              const g = await client.generateAnswer(u.label, contexto, '', lang);
+              if (g && g.resposta) {
+                results.push({ fieldId: u.id, type: u.type, value: g.resposta, source: 'ia' });
+                generated++;
+              }
+            } catch (e) {
+              debugLogs.push(`[IA] falha p/ "${u.label}": ${e.message}`);
+            }
+          }
+          if (generated) debugLogs.push(`IA gerou ${generated} resposta(s).`);
+
           sendResponse({ success: true, results, unmatched, debugLogs });
           break;
         }
@@ -88,6 +106,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           const client = await getClient();
           const existingAnswer = await client.findAnswer(question);
           sendResponse({ success: true, exists: !!existingAnswer, existingAnswer });
+          break;
+        }
+
+        case 'GENERATE_ANSWER': {
+          const { pergunta, contexto, instrucao, idioma } = message.payload;
+          const client = await getClient();
+          const res = await client.generateAnswer(pergunta, contexto || '', instrucao || '', idioma || 'pt');
+          sendResponse({ success: true, resposta: res.resposta });
           break;
         }
 

@@ -63,6 +63,11 @@ export class HermesClient {
     return r ? r.resposta : null;
   }
 
+  /** Gera resposta para uma pergunta aberta via IA (POST /generate). */
+  async generateAnswer(pergunta, contexto = '', instrucao = '', idioma = 'pt') {
+    return await this._post('/generate', { pergunta, contexto, instrucao, idioma });
+  }
+
   /** Registra uma vaga capturada manualmente (POST /capture). */
   async captureVaga(payload) {
     return await this._post('/capture', payload);

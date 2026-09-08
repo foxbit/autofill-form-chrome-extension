@@ -65,6 +65,22 @@ if (document.readyState === 'complete' || document.readyState === 'interactive')
   window.addEventListener('DOMContentLoaded', scanForm);
 }
 
+/**
+ * Captura contexto da página (empresa/vaga) para a geração de respostas.
+ */
+function getPageContext() {
+  const meta = (sel, attr) => {
+    const el = document.querySelector(sel);
+    return el ? (el.getAttribute(attr) || '').trim() : '';
+  };
+  return [
+    document.title,
+    meta('meta[name="description"]', 'content'),
+    meta('meta[property="og:description"]', 'content'),
+    meta('meta[property="og:site_name"]', 'content'),
+  ].filter(Boolean).join(' | ').slice(0, 1200);
+}
+
 // Listen for messages
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   (async () => {
@@ -73,7 +89,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         case 'GET_FORM_FIELDS': {
           // Perform a fresh scan to capture dynamic elements (Gupy, GreenHouse can render fields late)
           scanForm();
-          sendResponse({ success: true, fields: parsedFields });
+          sendResponse({ success: true, fields: parsedFields, contexto: getPageContext() });
           break;
         }
 
@@ -357,7 +373,7 @@ function getUploadButtonInsertionPoint(field) {
 }
 
 function injectUploadButtons(fields) {
-  document.querySelectorAll('.autofill-upload-btn').forEach(el => el.remove());
+  document.querySelectorAll('.autofill-upload-btn, .autofill-gen-btn').forEach(el => el.remove());
 
   fields.forEach(field => {
     if (field.type === 'file') return;
@@ -392,6 +408,32 @@ function injectUploadButtons(fields) {
       }
     } catch (err) {
       console.warn(`Erro ao inserir botão de upload para o campo: ${field.question}`, err);
+    }
+
+    // Botão de geração IA (⚡) ao lado do de aprendizado
+    const genBtn = document.createElement('button');
+    genBtn.className = 'autofill-upload-btn autofill-gen-btn';
+    genBtn.setAttribute('data-field-id', field.id);
+    genBtn.setAttribute('type', 'button');
+    genBtn.title = 'Gerar resposta com IA';
+    genBtn.innerHTML = `
+      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="autofill-upload-svg">
+        <path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/>
+      </svg>
+    `;
+    genBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      handleGenerateClick(field);
+    });
+    try {
+      if (insertion.position === 'beforeend') {
+        insertion.element.appendChild(genBtn);
+      } else if (insertion.position === 'afterend') {
+        insertion.element.parentNode.insertBefore(genBtn, btn.nextSibling);
+      }
+    } catch (err) {
+      console.warn(`Erro ao inserir botão de geração: ${field.question}`, err);
     }
   });
 }
@@ -498,6 +540,83 @@ async function saveAnswerToServer(field, question, answer) {
       updateButtonState(btn, field);
     }
   }
+}
+
+function handleGenerateClick(field) {
+  showGenerateModal(field);
+}
+
+function showGenerateModal(field) {
+  const overlay = document.createElement('div');
+  overlay.className = 'autofill-modal-overlay';
+  overlay.innerHTML = `
+    <div class="autofill-modal">
+      <div class="autofill-modal-header">
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+        <span>Gerar resposta com IA</span>
+      </div>
+      <div class="autofill-modal-body">
+        <div class="autofill-modal-label">Pergunta</div>
+        <div class="autofill-modal-text" style="font-weight: 500;">${escapeHtml(field.question)}</div>
+        <div class="autofill-modal-group">
+          <label class="autofill-modal-label">Instrução (opcional)</label>
+          <textarea class="autofill-modal-textarea autofill-instrucao-input" rows="3" placeholder="Ex.: mencionar minha experiência com fintech e design systems"></textarea>
+        </div>
+        <div id="autofill-gen-result" hidden>
+          <label class="autofill-modal-label">Resposta gerada</label>
+          <textarea class="autofill-modal-textarea autofill-gen-answer" rows="5"></textarea>
+        </div>
+      </div>
+      <div class="autofill-modal-footer">
+        <button class="autofill-modal-btn autofill-modal-btn-cancel">Cancelar</button>
+        <button class="autofill-modal-btn autofill-modal-btn-confirm autofill-gen-submit">Gerar</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  const close = () => overlay.remove();
+  const cancelBtn = overlay.querySelector('.autofill-modal-btn-cancel');
+  const submitBtn = overlay.querySelector('.autofill-gen-submit');
+  const instrucaoEl = overlay.querySelector('.autofill-instrucao-input');
+  const resultEl = overlay.querySelector('#autofill-gen-result');
+  const answerEl = overlay.querySelector('.autofill-gen-answer');
+  let generated = '';
+
+  cancelBtn.addEventListener('click', close);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+
+  submitBtn.addEventListener('click', async () => {
+    if (!generated) {
+      submitBtn.disabled = true;
+      submitBtn.textContent = 'Gerando...';
+      const resp = await new Promise((resolve) => {
+        chrome.runtime.sendMessage({
+          type: 'GENERATE_ANSWER',
+          payload: {
+            pergunta: field.question,
+            contexto: getPageContext(),
+            instrucao: instrucaoEl.value.trim(),
+            idioma: /[a-zA-Z]/.test(field.question) && !/[áéíóúâêôãõç]/.test(field.question) ? 'en' : 'pt'
+          }
+        }, resolve);
+      });
+      submitBtn.disabled = false;
+      if (!resp || !resp.success) {
+        showToast(`Erro: ${(resp && resp.error) || 'falha ao gerar'}`, 'error');
+        submitBtn.textContent = 'Gerar';
+        return;
+      }
+      generated = resp.resposta;
+      answerEl.value = generated;
+      resultEl.hidden = false;
+      submitBtn.textContent = 'Aprovar e preencher';
+    } else {
+      close();
+      await window.formFiller.fill(field, generated);
+      showToast('Resposta preenchida.', 'success');
+    }
+  });
 }
 
 function escapeHtml(str) {

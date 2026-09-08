@@ -85,7 +85,7 @@ document.getElementById('btnAutofill').addEventListener('click', async () => {
   setStatus(`Preenchendo ${fieldsRes.fields.length} campos via API...`, 'info');
   const fillRes = await sendToBackground({
     type: 'AUTOFILL_FIELDS',
-    payload: { fields: fieldsRes.fields }
+    payload: { fields: fieldsRes.fields, contexto: fieldsRes.contexto || '' }
   });
   if (!fillRes || !fillRes.success) {
     return setStatus(`❌ ${(fillRes && fillRes.error) || 'Falha no preenchimento'}`, 'error');
