@@ -14,7 +14,7 @@ window.formFiller = {
 
     // Skip already-filled text fields
     if (field.type === 'text' || field.type === 'textarea') {
-      const el = document.getElementById(field.elementIds[0]);
+      const el = window.domParser.getElement(field.elementIds[0]);
       if (el && el.value && el.value.trim() !== '') {
         console.log(`Pular campo preenchido: ${field.question}`);
         return false;
@@ -47,7 +47,7 @@ window.formFiller = {
    * Simulates typing character-by-character to satisfy SPAs (React, Vue, Angular)
    */
   async fillText(elementId, text) {
-    const el = document.getElementById(elementId);
+    const el = window.domParser.getElement(elementId);
     if (!el) return false;
 
     el.focus();
@@ -85,7 +85,7 @@ window.formFiller = {
    * Injects Blob file data into an input[type="file"] element
    */
   async fillFile(elementId, fileBlob, questionText) {
-    const el = document.getElementById(elementId);
+    const el = window.domParser.getElement(elementId);
     if (!el) return false;
 
     let fileName = 'cv.pdf';

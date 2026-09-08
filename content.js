@@ -34,10 +34,10 @@ function captureValues(fields) {
   fields.forEach(field => {
     try {
       if (field.type === 'file') {
-        const el = document.getElementById(field.elementIds[0]);
+        const el = window.domParser.getElement(field.elementIds[0]);
         values[field.id] = el && el.files && el.files.length > 0 ? el.files[0].name : '';
       } else {
-        const el = document.getElementById(field.elementIds[0]);
+        const el = window.domParser.getElement(field.elementIds[0]);
         values[field.id] = el ? el.value : '';
       }
     } catch (err) {
@@ -81,6 +81,226 @@ function getPageContext() {
   ].filter(Boolean).join(' | ').slice(0, 1200);
 }
 
+/**
+ * Extração da vaga em foco (título, empresa, requisitos e descrição completa).
+ * Ordem de preferência: JSON-LD (schema.org/JobPosting) → container conhecido
+ * do ATS → maior bloco de texto da página.
+ */
+const JOB_DESCRIPTION_SELECTORS = [
+  '[data-automation-id="jobPostingDescription"]',   // Workday
+  '[data-testid="job-description"]',                // Gupy
+  '[data-testid="text-section"]',                   // Gupy (blocos de texto)
+  '[class*="descriptionText"]',                     // Ashby
+  '#jobDescriptionText',                            // Indeed
+  '.jobs-description__content',                     // LinkedIn (logado)
+  '.description__text',                             // LinkedIn (público)
+  '.job__description',                              // Greenhouse (embed)
+  '#content',                                       // Greenhouse
+  '.section-wrapper',                               // Lever
+  '[class*="job-description"]',
+  '[class*="jobDescription"]',
+  '[id*="job-description"]',
+  'article',
+  'main'
+];
+
+const JOB_KEYWORDS = /requisit|qualifica|responsabilidad|atividad|experiênc|experienc|desejáve|diferenci|benefíc|requirement|responsibilit|qualification|skills|about the role|what you/i;
+
+const MAX_DESCRICAO = 20000;
+const MAX_PAGINA = 60000;
+
+// Plataformas de recrutamento: quando o og:site_name/hostname cai numa delas,
+// o nome que interessa é o da empresa contratante, não o do ATS.
+const ATS_HOSTS = /gupy|greenhouse|lever|workable|ashby|indeed|linkedin|workday|breezy|recruitee|jobvite|smartrecruiters|glassdoor|vagas\.com|infojobs|catho|solides|kenoby|abler|inhire|remotive|wellfound|angel\.co|myworkdayjobs|careers?$/i;
+
+// Prefixos de portal que sujam o nome do cargo ("Vaga: Product Designer").
+const TITULO_PREFIXOS = /^(vagas?|oportunidade|job|jobs|carreiras?|careers?|apply|candidatura)\s*[:\-–—]\s*/i;
+
+/** Segmentos de um <title> do tipo "Cargo | Empresa | Plataforma". */
+function titleSegments(rawTitle) {
+  return String(rawTitle || '')
+    .split(/\s*[|·–—]\s*/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+function guessEmpresa(rawTitle, atual) {
+  if (atual && !ATS_HOSTS.test(atual)) return atual;
+  const candidatos = titleSegments(rawTitle).slice(1)
+    .filter((s) => !ATS_HOSTS.test(s) && s.length < 60);
+  return candidatos[0] || atual;
+}
+
+function normalizeJobText(text) {
+  return String(text || '')
+    .replace(/\r/g, '')
+    .replace(/[ \t\u00a0]+/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+/** Converte um trecho de HTML (JSON-LD) em texto, sem executar nada. */
+function jobHtmlToText(html) {
+  const marked = String(html || '')
+    .replace(/<\s*br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|li|div|h[1-6]|tr|ul|ol)\s*>/gi, '\n');
+  const doc = new DOMParser().parseFromString(marked, 'text/html');
+  return normalizeJobText(doc.body ? doc.body.textContent : marked);
+}
+
+function jsonLdJobPostings() {
+  const found = [];
+  const visit = (node) => {
+    if (!node || typeof node !== 'object') return;
+    if (Array.isArray(node)) return node.forEach(visit);
+    const type = node['@type'];
+    const isJob = type === 'JobPosting' ||
+      (Array.isArray(type) && type.includes('JobPosting'));
+    if (isJob) found.push(node);
+    Object.values(node).forEach(visit);
+  };
+  document.querySelectorAll('script[type="application/ld+json"]').forEach((script) => {
+    try {
+      visit(JSON.parse(script.textContent));
+    } catch (err) {
+      /* JSON-LD malformado: ignora e segue para o próximo */
+    }
+  });
+  return found;
+}
+
+function flattenJobValue(value) {
+  if (!value) return '';
+  if (Array.isArray(value)) return value.map(flattenJobValue).filter(Boolean).join('\n');
+  if (typeof value === 'object') {
+    return flattenJobValue(value.name || value.value || value.description || '');
+  }
+  return jobHtmlToText(value);
+}
+
+/** Melhor bloco de texto da página, pontuado por tamanho + palavras da vaga. */
+function bestDescriptionBlock() {
+  let best = { texto: '', score: 0, seletor: '' };
+  for (const selector of JOB_DESCRIPTION_SELECTORS) {
+    let elements = [];
+    try {
+      elements = [...document.querySelectorAll(selector)];
+    } catch (err) {
+      continue;
+    }
+    const texto = normalizeJobText(
+      elements.map((el) => el.innerText || el.textContent || '').join('\n\n')
+    );
+    if (texto.length < 200) continue;
+    const score = texto.length + (JOB_KEYWORDS.test(texto) ? 5000 : 0);
+    if (score > best.score) best = { texto, score, seletor: selector };
+  }
+  return best;
+}
+
+/**
+ * Todo o texto visível da página (inclusive iframes de mesma origem, usados por
+ * Greenhouse/Lever embutidos). É o que vai para o Hermes analisar — os
+ * seletores de ATS abaixo servem só para destacar o trecho principal.
+ */
+function fullPageText() {
+  const partes = [document.body ? document.body.innerText || document.body.textContent : ''];
+  for (const frame of document.querySelectorAll('iframe')) {
+    try {
+      const doc = frame.contentDocument;
+      if (doc && doc.body) partes.push(doc.body.innerText || doc.body.textContent);
+    } catch (err) {
+      /* iframe de outra origem: inacessível, segue o jogo */
+    }
+  }
+  const linhas = normalizeJobText(partes.filter(Boolean).join('\n\n')).split('\n');
+  const vistas = new Set();
+  return linhas
+    .filter((linha) => {
+      const chave = linha.trim();
+      if (!chave) return true;
+      if (chave.length < 40 && vistas.has(chave)) return false;  // menus repetidos
+      vistas.add(chave);
+      return true;
+    })
+    .join('\n')
+    .slice(0, MAX_PAGINA);
+}
+
+function extractJobPosting() {
+  const meta = (sel, attr) => {
+    const el = document.querySelector(sel);
+    return el ? (el.getAttribute(attr) || '').trim() : '';
+  };
+
+  const rawTitle = meta('meta[property="og:title"]', 'content') || document.title || '';
+  let titulo = (titleSegments(rawTitle)[0] || rawTitle).replace(TITULO_PREFIXOS, '').trim();
+  let empresa = guessEmpresa(
+    document.title || rawTitle,
+    meta('meta[property="og:site_name"]', 'content') ||
+      new URL(location.href).hostname.replace(/^www\./, '')
+  );
+  let local = '';
+  let descricao = '';
+  let requisitos = '';
+  let skills = [];
+  let fonte = '';
+
+  const [posting] = jsonLdJobPostings();
+  if (posting) {
+    titulo = flattenJobValue(posting.title) || titulo;
+    empresa = flattenJobValue(posting.hiringOrganization) || empresa;
+    local = flattenJobValue(posting.jobLocation) ||
+      (posting.jobLocationType ? String(posting.jobLocationType) : '');
+    descricao = flattenJobValue(posting.description);
+    requisitos = [
+      flattenJobValue(posting.qualifications),
+      flattenJobValue(posting.experienceRequirements),
+      flattenJobValue(posting.educationRequirements),
+      flattenJobValue(posting.responsibilities)
+    ].filter(Boolean).join('\n\n');
+    const rawSkills = posting.skills || posting.occupationalCategory || '';
+    skills = (Array.isArray(rawSkills) ? rawSkills : String(rawSkills).split(/[,;•|]/))
+      .map((s) => flattenJobValue(s).trim())
+      .filter(Boolean);
+    if (descricao) fonte = 'json-ld';
+  }
+
+  if (descricao.length < 400) {
+    const bloco = bestDescriptionBlock();
+    if (bloco.texto.length > descricao.length) {
+      descricao = bloco.texto;
+      fonte = `seletor:${bloco.seletor}`;
+    }
+  }
+
+  const pagina = fullPageText();
+
+  if (!descricao) {
+    descricao = pagina;
+    fonte = 'corpo da página';
+  }
+
+  descricao = descricao.slice(0, MAX_DESCRICAO);
+  requisitos = requisitos.slice(0, MAX_DESCRICAO);
+
+  const resumo = meta('meta[name="description"]', 'content') ||
+    meta('meta[property="og:description"]', 'content');
+
+  return {
+    titulo,
+    empresa,
+    local,
+    url: location.href,
+    observacoes: (resumo || descricao).slice(0, 300),
+    descricao,
+    requisitos,
+    pagina,
+    skills: skills.slice(0, 40),
+    fonte
+  };
+}
+
 // Listen for messages
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   (async () => {
@@ -95,13 +315,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           // Perform a fresh scan to capture dynamic elements (Gupy, GreenHouse can render fields late)
           scanForm();
           sendResponse({ success: true, fields: parsedFields, contexto: getPageContext() });
-          break;
-        }
-
-        case 'RESCAN_FORM': {
-          // Re-analisa a página inteira (útil para SPAs que trocam de formulário sem reload)
-          scanForm();
-          sendResponse({ success: true, fields: parsedFields.length, contexto: getPageContext() });
           break;
         }
 
@@ -184,23 +397,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
 
         case 'EXTRACT_JOB_INFO': {
-          const meta = (sel, attr) => {
-            const el = document.querySelector(sel);
-            return el ? (el.getAttribute(attr) || '').trim() : '';
-          };
-          const rawTitle = meta('meta[property="og:title"]', 'content') || document.title || '';
-          const titulo = rawTitle.replace(/\s*[|\-–·]\s*[^|\-–·]*$/, '').trim();
-          const empresa = meta('meta[property="og:site_name"]', 'content') ||
-            new URL(location.href).hostname.replace(/^www\./, '');
-          const observacoes = meta('meta[name="description"]', 'content').slice(0, 300);
-          sendResponse({
-            success: true,
-            titulo: titulo || rawTitle,
-            empresa,
-            local: '',
-            url: location.href,
-            observacoes
-          });
+          sendResponse({ success: true, ...extractJobPosting() });
           break;
         }
 
@@ -226,10 +423,10 @@ function highlightEmptyRequiredFields(fields) {
 
     try {
       if (field.type === 'file') {
-        const el = document.getElementById(field.elementIds[0]);
+        const el = window.domParser.getElement(field.elementIds[0]);
         isEmpty = !el || !el.files || el.files.length === 0;
       } else {
-        const el = document.getElementById(field.elementIds[0]);
+        const el = window.domParser.getElement(field.elementIds[0]);
         isEmpty = !el || !el.value || el.value.trim() === '';
       }
     } catch (err) {
@@ -238,7 +435,7 @@ function highlightEmptyRequiredFields(fields) {
 
     if (field.required && isEmpty) {
       field.elementIds.forEach(id => {
-        const el = document.getElementById(id);
+        const el = window.domParser.getElement(id);
         if (el) {
           el.classList.add('autofill-failed');
           el.classList.remove('autofill-success');
@@ -247,7 +444,7 @@ function highlightEmptyRequiredFields(fields) {
       });
     } else {
       field.elementIds.forEach(id => {
-        const el = document.getElementById(id);
+        const el = window.domParser.getElement(id);
         if (el) el.classList.remove('autofill-failed');
       });
     }
@@ -282,7 +479,7 @@ function highlightScannedFields(fields) {
   fields.forEach(field => {
     // Only apply scanned class if the field is not already highlighted as success
     field.elementIds.forEach(id => {
-      const el = document.getElementById(id);
+      const el = window.domParser.getElement(id);
       if (el && !el.classList.contains('autofill-success')) {
         el.classList.add('autofill-scanned');
       }
@@ -293,10 +490,12 @@ function highlightScannedFields(fields) {
 // Remove highlights on user interaction to avoid cluttering the UI and handle upload button states
 function handleFieldChange(e) {
   const target = e.target;
-  if (!target || !target.id) return;
+  const fieldElementId = target && target.getAttribute &&
+    target.getAttribute(window.domParser.fieldAttribute);
+  if (!fieldElementId) return;
   
   // Find which parsed field this element belongs to
-  const field = parsedFields.find(f => f.elementIds.includes(target.id));
+  const field = parsedFields.find(f => f.elementIds.includes(fieldElementId));
   if (!field) return;
 
   // Find the button
@@ -325,7 +524,7 @@ function getFieldCurrentValue(field) {
     if (field.type === 'file') {
       return '';
     }
-    const el = document.getElementById(field.elementIds[0]);
+    const el = window.domParser.getElement(field.elementIds[0]);
     return el ? el.value.trim() : '';
   } catch (err) {
     console.warn(`Error getting value for field: ${field.question}`, err);
@@ -350,7 +549,7 @@ function updateButtonState(btn, field) {
 }
 
 function getUploadButtonInsertionPoint(field) {
-  const firstEl = document.getElementById(field.elementIds[0]);
+  const firstEl = window.domParser.getElement(field.elementIds[0]);
   if (!firstEl) return null;
 
   if (field.type === 'file') return null;
@@ -362,7 +561,8 @@ function getUploadButtonInsertionPoint(field) {
   }
 
   if (firstEl.id) {
-    const label = document.querySelector(`label[for="${CSS.escape(firstEl.id)}"]`);
+    const root = window.domParser.getRoot(firstEl);
+    const label = root.querySelector(`label[for="${CSS.escape(firstEl.id)}"]`);
     if (label) return { element: label, position: 'beforeend' };
   }
 
@@ -373,9 +573,10 @@ function getUploadButtonInsertionPoint(field) {
 
   if (field.type === 'radio' || (field.type === 'checkbox' && !field.standalone)) {
     const lastElId = field.elementIds[field.elementIds.length - 1];
-    const lastEl = document.getElementById(lastElId);
+    const lastEl = window.domParser.getElement(lastElId);
     if (lastEl) {
-      const lastLabel = lastEl.closest('label') || document.querySelector(`label[for="${CSS.escape(lastEl.id)}"]`);
+      const root = window.domParser.getRoot(lastEl);
+      const lastLabel = lastEl.closest('label') || root.querySelector(`label[for="${CSS.escape(lastEl.id)}"]`);
       if (lastLabel) return { element: lastLabel, position: 'afterend' };
       return { element: lastEl, position: 'afterend' };
     }
@@ -797,4 +998,3 @@ function showToast(message, type = 'success') {
     setTimeout(() => toast.remove(), 300);
   }, 3500);
 }
-

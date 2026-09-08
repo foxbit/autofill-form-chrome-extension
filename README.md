@@ -25,9 +25,40 @@ content.js (formulário) ──► background.js (service worker) ──► Herm
 
 | Ação | Fluxo |
 |---|---|
-| **Autopreencher** | varre o formulário → `POST /fill` (perfil + QA histórico) → preenche os campos |
+| **Autopreencher** | reanalisa a aba ativa e seus modais/iframes → `POST /fill` (perfil + QA histórico) → preenche os campos |
 | **Capturar vaga** | extrai título/empresa/descrição da página → `POST /capture` → Banco de Vagas |
-| **Gerar CV** | extrai a vaga → `POST /cv` (template + Chrome headless) → PDF personalizado |
+| **Gerar CV** | extrai o texto da vaga → `POST /cv` (template + Chrome headless) → PDF personalizado |
+
+### O que a extensão envia da vaga
+
+`EXTRACT_JOB_INFO` (em `content.js`) não depende de nenhum portal específico: manda **todo o texto
+visível da página** (mais iframes de mesma origem) e, quando consegue isolá-los, os recortes que
+pesam mais no ranking do Hermes.
+
+| Campo | Origem | Peso no `cvgen` |
+|---|---|---|
+| `pagina` | `body.innerText` inteiro, sem menus repetidos (até 60 000 caracteres) | 1 |
+| `descricao` | JSON-LD `JobPosting.description` → container do ATS → corpo da página | 2 |
+| `requisitos` | JSON-LD (`qualifications`, `experienceRequirements`, `responsibilities`) | 3 |
+| `skills[]` | JSON-LD `JobPosting.skills` | 4 |
+| `titulo` / `empresa` / `local` | JSON-LD, `og:*` ou `<title>` (ignora o nome do ATS) | — |
+
+Os seletores de ATS (Gupy, Greenhouse, Lever, Ashby, Workday, LinkedIn, Indeed…) só servem para
+**destacar** o trecho principal; num site desconhecido a extração cai no corpo da página e o CV
+continua sendo personalizado.
+
+### Paginação do CV
+
+O `POST /cv` leva o objeto `paginacao` definido em `popup.js` (`CV_PAGINACAO`); o Hermes usa
+esses valores para montar o CSS de impressão do template — a quebra de página cai **entre**
+os blocos (experiência, formação, idiomas) em vez de cortá-los ao meio.
+
+| Campo | Padrão | Descrição |
+|---|---|---|
+| `formato` | `Letter` | tamanho da folha (`Letter`, `A4`…) |
+| `margem_topo` / `margem_lateral` / `margem_rodape` | `0.35in` / `0.4in` / `0.35in` | margens do `@page` |
+| `quebrar_blocos` | `true` | `false` volta ao corte livre |
+| `evitar_quebra_em` | `[]` | seletores extras que não podem ser partidos |
 | **Aprender** | ícone ☁️ por campo: salva correção → `POST /learn` (refina o QA no cofre) |
 
 ## Configuração

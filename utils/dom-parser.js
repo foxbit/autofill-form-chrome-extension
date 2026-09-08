@@ -2,6 +2,75 @@
  * Utility to parse the DOM and identify form fields and their associated questions.
  */
 window.domParser = {
+  fieldAttribute: 'data-autofill-field-id',
+
+  /**
+   * Returns the root that owns an element. Labels and controls inside an open
+   * Shadow DOM are not visible to document.querySelector().
+   */
+  getRoot(el) {
+    const root = el && el.getRootNode ? el.getRootNode() : document;
+    return root && typeof root.querySelector === 'function' ? root : document;
+  },
+
+  /**
+   * Finds inputs in the document and in every open Shadow DOM tree. Dialog
+   * libraries commonly render their content in those trees.
+   */
+  getFormControls() {
+    const controls = [];
+    const roots = [document];
+    const visited = new Set();
+
+    while (roots.length) {
+      const root = roots.pop();
+      if (!root || visited.has(root)) continue;
+      visited.add(root);
+
+      controls.push(...root.querySelectorAll('input, textarea'));
+      root.querySelectorAll('*').forEach((node) => {
+        if (node.shadowRoot && node.shadowRoot.mode === 'open') {
+          roots.push(node.shadowRoot);
+        }
+      });
+    }
+
+    return controls;
+  },
+
+  /** Finds a parsed field even when it lives inside an open Shadow DOM. */
+  getElement(fieldId) {
+    if (!fieldId) return null;
+    const selector = `[${this.fieldAttribute}="${CSS.escape(fieldId)}"]`;
+    const roots = [document];
+    const visited = new Set();
+
+    while (roots.length) {
+      const root = roots.pop();
+      if (!root || visited.has(root)) continue;
+      visited.add(root);
+
+      const match = root.querySelector(selector);
+      if (match) return match;
+      root.querySelectorAll('*').forEach((node) => {
+        if (node.shadowRoot && node.shadowRoot.mode === 'open') {
+          roots.push(node.shadowRoot);
+        }
+      });
+    }
+
+    return null;
+  },
+
+  getOrCreateFieldId(el) {
+    let id = el.getAttribute(this.fieldAttribute);
+    if (!id) {
+      id = `autofill-${crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2)}`;
+      el.setAttribute(this.fieldAttribute, id);
+    }
+    return id;
+  },
+
   /**
    * Cleans question text by removing required marks (*), colons, and excess whitespace
    * @param {string} text - Raw label text
@@ -25,22 +94,26 @@ window.domParser = {
    */
   isVisible(el) {
     if (!el) return false;
-    const rect = el.getBoundingClientRect();
-    if (rect.width === 0 && rect.height === 0) return false;
-    
-    const style = window.getComputedStyle(el);
-    if (style.display === 'none') return false;
-    if (style.visibility === 'hidden') return false;
-    if (style.opacity === '0') return false;
-    
-    // Check if any parent is hidden
-    let parent = el.parentElement;
-    while (parent) {
-      const parentStyle = window.getComputedStyle(parent);
-      if (parentStyle.display === 'none' || parentStyle.visibility === 'hidden') {
+    let current = el;
+
+    // Walk the composed tree so a hidden host also hides controls rendered in
+    // its Shadow DOM. Do not reject opacity: 0: many modal/file components
+    // keep the real editable input transparent and render a custom UI above it.
+    while (current) {
+      const style = window.getComputedStyle(current);
+      if (style.display === 'none' || style.visibility === 'hidden') {
         return false;
       }
-      parent = parent.parentElement;
+      if (current.getAttribute && current.getAttribute('aria-hidden') === 'true') {
+        return false;
+      }
+
+      if (current.parentElement) {
+        current = current.parentElement;
+      } else {
+        const root = current.getRootNode && current.getRootNode();
+        current = root && root.host ? root.host : null;
+      }
     }
     
     return true;
@@ -52,9 +125,11 @@ window.domParser = {
    * @returns {string} Associated question text
    */
   getQuestion(input) {
+    const root = this.getRoot(input);
+
     // 1. Check for explicit label with 'for' attribute
     if (input.id) {
-      const label = document.querySelector(`label[for="${CSS.escape(input.id)}"]`);
+      const label = root.querySelector(`label[for="${CSS.escape(input.id)}"]`);
       if (label && label.innerText.trim()) {
         return this.cleanQuestion(label.innerText);
       }
@@ -85,9 +160,11 @@ window.domParser = {
     }
     const ariaLabelledBy = input.getAttribute('aria-labelledby');
     if (ariaLabelledBy) {
-      const labelEl = document.getElementById(ariaLabelledBy);
-      if (labelEl && labelEl.innerText.trim()) {
-        return this.cleanQuestion(labelEl.innerText);
+      for (const labelId of ariaLabelledBy.split(/\s+/)) {
+        const labelEl = root.querySelector(`#${CSS.escape(labelId)}`);
+        if (labelEl && labelEl.innerText.trim()) {
+          return this.cleanQuestion(labelEl.innerText);
+        }
       }
     }
 
@@ -203,7 +280,7 @@ window.domParser = {
     const fields = [];
 
     // Query only text inputs, textareas and file inputs — skip select, radio, checkbox
-    const elements = Array.from(document.querySelectorAll('input, textarea'));
+    const elements = this.getFormControls();
 
     for (const el of elements) {
       if (!this.isVisible(el)) continue;
@@ -215,8 +292,7 @@ window.domParser = {
       // Skip comboboxes / autocomplete inputs — filling them opens dropdown UI
       if (el.tagName === 'INPUT' && this.isCombobox(el)) continue;
 
-      const id = el.id || `field-${Math.random().toString(36).substr(2, 9)}`;
-      el.id = id; // Ensure element has id for reference
+      const id = this.getOrCreateFieldId(el);
 
       const isRequired = el.hasAttribute('required') ||
                          el.getAttribute('aria-required') === 'true' ||
@@ -262,8 +338,9 @@ window.domParser = {
    * @returns {string} Label option text
    */
   getOptionLabel(input) {
+    const root = this.getRoot(input);
     if (input.id) {
-      const label = document.querySelector(`label[for="${CSS.escape(input.id)}"]`);
+      const label = root.querySelector(`label[for="${CSS.escape(input.id)}"]`);
       if (label && label.innerText.trim()) return label.innerText.trim();
     }
     const parentLabel = input.closest('label');
