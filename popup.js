@@ -5,6 +5,9 @@
 
 const apiUrlInput = document.getElementById('apiUrl');
 const statusEl = document.getElementById('status');
+const resultEl = document.getElementById('result');
+const resultNameEl = document.getElementById('resultName');
+let lastCv = null;
 
 // ─── helpers ─────────────────────────────────────────────
 function setStatus(message, type = 'info') {
@@ -120,14 +123,32 @@ document.getElementById('btnCv').addEventListener('click', async () => {
     const apiUrl = apiUrlInput.value.trim().replace(/\/$/, '');
     const filename = res.data.pdf.split('/').pop();
     const fileUrl = `${apiUrl}/cvs/${encodeURIComponent(filename)}`;
-    setStatusHtml(`✅ CV gerado: <a href="${fileUrl}" target="_blank">${filename}</a> (iniciando download...)`, 'success');
+    lastCv = { fileUrl, filename };
+    resultNameEl.textContent = filename;
+    resultEl.hidden = false;
+    setStatus('✅ CV gerado. Use os botões abaixo para abrir ou baixar.', 'success');
+    // tentativa best-effort de download automático (sem diálogo)
     try {
-      await chrome.downloads.download({ url: fileUrl, filename, saveAs: true });
+      await chrome.downloads.download({ url: fileUrl, filename, saveAs: false });
     } catch (dlErr) {
-      console.warn('Download automático falhou (abra pelo link):', dlErr);
+      console.warn('Download automático falhou (use os botões):', dlErr);
     }
   } else {
     setStatus(`❌ ${(res && res.error) || 'Falha ao gerar CV'}`, 'error');
+  }
+});
+
+document.getElementById('btnOpenCv').addEventListener('click', () => {
+  if (!lastCv) return;
+  chrome.tabs.create({ url: lastCv.fileUrl });
+});
+
+document.getElementById('btnDownloadCv').addEventListener('click', async () => {
+  if (!lastCv) return;
+  try {
+    await chrome.downloads.download({ url: lastCv.fileUrl, filename: lastCv.filename, saveAs: true });
+  } catch (err) {
+    setStatus(`❌ Download falhou: ${err.message}`, 'error');
   }
 });
 
