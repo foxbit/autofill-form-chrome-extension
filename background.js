@@ -40,44 +40,95 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
 
         case 'AUTOFILL_FIELDS': {
-          const { fields, contexto = '' } = message.payload;
+          const { fields, contexto = '', idioma = 'pt' } = message.payload;
           const client = await getClient();
 
-          // Mapeia o formato do content script (question) para o da API (label)
+          // Mapeia o formato do content script (question) para o da API (label).
+          // As opções vão junto: quem escolhe qual marcar é o Hermes.
           const apiFields = fields.map((f) => ({
             id: f.id,
             label: f.question || f.name || '',
-            type: f.type
+            type: f.type,
+            options: (f.options || []).map((o) => o.label).filter(Boolean),
+            required: !!f.required,
+            multiple: !!f.multiple,
+            standalone: !!f.standalone,
+            accept: f.accept || ''
           }));
 
           const res = await client.fill(apiFields);
-          const results = (res.filled || []).map((f) => ({
-            fieldId: f.id,
-            type: f.type,
-            value: f.value,
-            source: f.source
-          }));
-          const unmatched = res.unmatched || [];
-          const debugLogs = [
-            `Máquina de Vagas API: ${results.length} campo(s) preenchido(s), ${unmatched.length} para revisão manual.`
-          ];
+          const debugLogs = [];
+          const results = [];
+          const arquivos = new Map();   // tipo -> {base64, fileName, mimeType}
 
-          // Auto-gera respostas para campos abertos não resolvidos (máx. 5)
-          let generated = 0;
-          for (const u of unmatched.slice(0, 5)) {
-            if (u.type === 'file') continue;
-            const lang = /[a-zA-Z]/.test(u.label) && !/[áéíóúâêôãõç]/.test(u.label) ? 'en' : 'pt';
-            try {
-              const g = await client.generateAnswer(u.label, contexto, '', lang);
-              if (g && g.resposta) {
-                results.push({ fieldId: u.id, type: u.type, value: g.resposta, source: 'ia' });
-                generated++;
+          for (const f of res.filled || []) {
+            // Campos de arquivo: a API devolve qual documento usar ("cv",
+            // "cover-letter") e o service worker baixa o PDF do cofre.
+            if (f.type === 'file') {
+              const tipo = String(f.value || 'cv');
+              try {
+                if (!arquivos.has(tipo)) {
+                  arquivos.set(tipo, await client.getArquivo(tipo, idioma));
+                }
+                const arquivo = arquivos.get(tipo);
+                results.push({
+                  fieldId: f.id,
+                  type: 'file',
+                  value: arquivo.base64,
+                  fileName: arquivo.fileName,
+                  mimeType: arquivo.mimeType,
+                  source: `arquivo:${tipo}`
+                });
+              } catch (e) {
+                debugLogs.push(`[arquivo] falha ao buscar "${tipo}": ${e.message}`);
               }
+              continue;
+            }
+
+            results.push({ fieldId: f.id, type: f.type, value: f.value, source: f.source });
+          }
+
+          let unmatched = res.unmatched || [];
+
+          // Campos de escolha que a regra não resolveu: a IA decide dentro da
+          // lista de opções (POST /fill-match). Campo sensível não entra aqui —
+          // a API já o separou para revisão manual.
+          const comOpcoes = unmatched.filter((u) => (u.options || []).length && u.reason !== 'campo sensível — responder manualmente');
+          if (comOpcoes.length) {
+            try {
+              const match = await client.fillMatch(comOpcoes, contexto);
+              for (const f of match.filled || []) {
+                results.push({ fieldId: f.id, type: f.type, value: f.value, source: f.source });
+              }
+              const resolvidos = new Set((match.filled || []).map((f) => f.id));
+              unmatched = unmatched.filter((u) => !resolvidos.has(u.id));
+              if (resolvidos.size) debugLogs.push(`IA escolheu opção em ${resolvidos.size} campo(s).`);
             } catch (e) {
-              debugLogs.push(`[IA] falha p/ "${u.label}": ${e.message}`);
+              debugLogs.push(`[fill-match] ${e.message}`);
             }
           }
-          if (generated) debugLogs.push(`IA gerou ${generated} resposta(s).`);
+
+          debugLogs.unshift(
+            `Máquina de Vagas API: ${results.length} campo(s) resolvido(s), ${unmatched.length} para revisão manual.`
+          );
+
+          // Auto-gera respostas para campos abertos não resolvidos (máx. 5),
+          // em paralelo — antes era uma chamada de cada vez.
+          const abertos = unmatched
+            .filter((u) => u.type !== 'file' && !(u.options && u.options.length))
+            .slice(0, 5);
+          const geradas = await Promise.all(abertos.map(async (u) => {
+            try {
+              const g = await client.generateAnswer(u.label, contexto, '', idioma);
+              return g && g.resposta ? { fieldId: u.id, type: u.type, value: g.resposta, source: 'ia' } : null;
+            } catch (e) {
+              debugLogs.push(`[IA] falha p/ "${u.label}": ${e.message}`);
+              return null;
+            }
+          }));
+          const validas = geradas.filter(Boolean);
+          results.push(...validas);
+          if (validas.length) debugLogs.push(`IA gerou ${validas.length} resposta(s).`);
 
           sendResponse({ success: true, results, unmatched, debugLogs });
           break;

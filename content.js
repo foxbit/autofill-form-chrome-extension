@@ -33,18 +33,40 @@ function captureValues(fields) {
   const values = {};
   fields.forEach(field => {
     try {
-      if (field.type === 'file') {
-        const el = window.domParser.getElement(field.elementIds[0]);
-        values[field.id] = el && el.files && el.files.length > 0 ? el.files[0].name : '';
-      } else {
-        const el = window.domParser.getElement(field.elementIds[0]);
-        values[field.id] = el ? el.value : '';
-      }
+      values[field.id] = readFieldValue(field);
     } catch (err) {
       console.warn(`Error capturing value for field: ${field.question}`, err);
     }
   });
   return values;
+}
+
+/** Current answer of a field, whatever its control type. */
+function readFieldValue(field) {
+  const el = window.domParser.getElement(field.elementIds[0]);
+  if (!el) return '';
+
+  if (field.type === 'file') {
+    return el.files && el.files.length > 0 ? el.files[0].name : '';
+  }
+
+  if (field.type === 'radio' || field.type === 'checkbox') {
+    const marcadas = field.elementIds
+      .map(id => window.domParser.getElement(id))
+      .filter(item => item && item.checked)
+      .map(item => window.domParser.getOptionLabel(item) || item.value);
+    if (field.standalone) return el.checked ? 'sim' : '';
+    return marcadas.join(', ');
+  }
+
+  if (field.type === 'select') {
+    const selecionadas = [...(el.selectedOptions || [])]
+      .map(option => (option.textContent || '').trim())
+      .filter(Boolean);
+    return selecionadas.join(', ');
+  }
+
+  return el.value || '';
 }
 
 /**
@@ -314,39 +336,55 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         case 'GET_FORM_FIELDS': {
           // Perform a fresh scan to capture dynamic elements (Gupy, GreenHouse can render fields late)
           scanForm();
-          sendResponse({ success: true, fields: parsedFields, contexto: getPageContext() });
+          sendResponse({
+            success: true,
+            fields: parsedFields,
+            contexto: getPageContext(),
+            idioma: (document.documentElement.lang || '').slice(0, 2).toLowerCase() || 'pt'
+          });
           break;
         }
 
         case 'AUTOFILL_FORM': {
           const { results } = message.payload;
-          let filledCount = 0;
+          const applied = [];
+          const failed = [];
 
           // Fill sequentially to respect visual flow and prevent SPA lag
           for (const result of results) {
             const field = parsedFields.find(f => f.id === result.fieldId);
-            if (!field) continue;
+            if (!field) {
+              failed.push({ question: result.fieldId, reason: 'campo saiu da página desde a varredura' });
+              continue;
+            }
 
             let fillValue = result.value;
 
-            // If it's a file, convert back from Base64
-            if (result.type === 'file' && typeof fillValue === 'string') {
-              try {
-                fillValue = base64ToBlob(fillValue);
-              } catch (blobErr) {
-                console.error(`Erro ao converter base64 do arquivo: ${result.fileName}`, blobErr);
-                continue;
+            // Files travel as Base64 through the message channel
+            if (result.type === 'file') {
+              field.fileName = result.fileName || 'curriculo.pdf';
+              field.mimeType = result.mimeType || 'application/pdf';
+              if (typeof fillValue === 'string') {
+                try {
+                  fillValue = base64ToBlob(fillValue, field.mimeType);
+                } catch (blobErr) {
+                  console.error(`Erro ao converter base64 do arquivo: ${field.fileName}`, blobErr);
+                  failed.push({ question: field.question, reason: 'arquivo inválido' });
+                  continue;
+                }
               }
             }
 
-            // Fill field
-            const success = await window.formFiller.fill(field, fillValue);
-            if (success) {
-              filledCount++;
+            const outcome = await window.formFiller.fill(field, fillValue);
+            if (outcome && outcome.ok) {
+              applied.push({ question: field.question, type: field.type, value: outcome.applied });
               // Save to autofilled values cache
-              autofilledValues[field.id] = result.value;
+              autofilledValues[field.id] = outcome.applied;
+            } else {
+              failed.push({ question: field.question, type: field.type, reason: (outcome && outcome.reason) || 'falhou' });
             }
           }
+          const filledCount = applied.length;
 
           // Highlight any required fields that remain empty/unselected
           highlightEmptyRequiredFields(parsedFields);
@@ -359,7 +397,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             }
           });
 
-          sendResponse({ success: true, filledCount });
+          sendResponse({ success: true, filledCount, applied, failed });
           break;
         }
 
@@ -422,13 +460,7 @@ function highlightEmptyRequiredFields(fields) {
     let isEmpty = false;
 
     try {
-      if (field.type === 'file') {
-        const el = window.domParser.getElement(field.elementIds[0]);
-        isEmpty = !el || !el.files || el.files.length === 0;
-      } else {
-        const el = window.domParser.getElement(field.elementIds[0]);
-        isEmpty = !el || !el.value || el.value.trim() === '';
-      }
+      isEmpty = !String(readFieldValue(field) || '').trim();
     } catch (err) {
       console.warn(`Erro ao checar se campo está vazio: ${field.question}`, err);
     }

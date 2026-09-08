@@ -192,9 +192,13 @@ async function scanFormInAllFrames(tabId) {
 
   const fields = [];
   let contexto = '';
+  let idioma = 'pt';
   for (const { frameId, response } of scans) {
     if (!response || !response.success) continue;
-    if (frameId === 0) contexto = response.contexto || '';
+    if (frameId === 0) {
+      contexto = response.contexto || '';
+      idioma = response.idioma || 'pt';
+    }
     for (const field of response.fields || []) {
       fields.push({
         ...field,
@@ -205,7 +209,7 @@ async function scanFormInAllFrames(tabId) {
     }
   }
 
-  return { fields, contexto };
+  return { fields, contexto, idioma };
 }
 
 async function ensureContentScript(tabId) {
@@ -316,11 +320,20 @@ document.getElementById('btnAutofill').addEventListener('click', (event) => runA
     return setStatus('Nenhum campo preenchível foi encontrado nesta página ou modal aberto.', 'error');
   }
 
-  addActivity(`${fieldsRes.fields.length} campo(s) encontrado(s); consultando respostas salvas.`, 'info');
+  const porTipo = fieldsRes.fields.reduce((acc, field) => {
+    acc[field.type] = (acc[field.type] || 0) + 1;
+    return acc;
+  }, {});
+  const resumoTipos = Object.entries(porTipo).map(([tipo, total]) => `${total} ${tipo}`).join(', ');
+  addActivity(`${fieldsRes.fields.length} campo(s) encontrado(s) (${resumoTipos}); consultando respostas salvas.`, 'info');
   setStatus('Consultando o Hermes e preparando as respostas…', 'info');
   const fillRes = await sendToBackground({
     type: 'AUTOFILL_FIELDS',
-    payload: { fields: fieldsRes.fields, contexto: fieldsRes.contexto || '' }
+    payload: {
+      fields: fieldsRes.fields,
+      contexto: fieldsRes.contexto || '',
+      idioma: fieldsRes.idioma || 'pt'
+    }
   });
   if (!fillRes || !fillRes.success) {
     return setStatus((fillRes && fillRes.error) || 'Falha ao preparar o preenchimento.', 'error');
@@ -341,13 +354,25 @@ document.getElementById('btnAutofill').addEventListener('click', (event) => runA
     sendToTab(tab.id, { type: 'AUTOFILL_FORM', payload: { results } }, frameId)
   ));
   const filledCount = frameResponses.reduce((total, response) => total + (response && response.filledCount || 0), 0);
+  const falhas = frameResponses.flatMap((response) => (response && response.failed) || []);
   const apiLog = (fillRes.debugLogs || []).join(' ');
   if (apiLog) addActivity(apiLog, 'info');
+
+  for (const falha of falhas.slice(0, 8)) {
+    addActivity(`Não aplicado — ${falha.question || 'campo'}: ${falha.reason}.`, 'info');
+  }
+  if (falhas.length > 8) {
+    addActivity(`…e mais ${falhas.length - 8} campo(s) para revisar manualmente.`, 'info');
+  }
 
   if (!resultsByFrame.size) {
     return setStatus('Análise concluída, mas não há respostas disponíveis para estes campos.', 'success');
   }
-  setStatus(`Preenchimento concluído: ${filledCount} campo(s) aplicado(s).`, 'success');
+  setStatus(
+    `Preenchimento concluído: ${filledCount} campo(s) aplicado(s)` +
+    `${falhas.length ? `, ${falhas.length} para revisar` : ''}.`,
+    falhas.length && !filledCount ? 'error' : 'success'
+  );
 }));
 
 document.getElementById('btnCapture').addEventListener('click', (event) => runAction(event.currentTarget, async () => {
