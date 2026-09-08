@@ -78,3 +78,5 @@ input[type="text"]:focus { border-color: var(--accent); }
 .status-info { background: rgba(99, 102, 241, .12); }
 .status-success { background: rgba(16, 185, 129, .12); border-color: rgba(16, 185, 129, .35); }
 .status-error { background: rgba(239, 68, 68, .12); border-color: rgba(239, 68, 68, .35); }
+
+.status a { color: #a5b4fc; word-break: break-all; }

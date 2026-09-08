@@ -13,6 +13,12 @@ function setStatus(message, type = 'info') {
   statusEl.textContent = message;
 }
 
+function setStatusHtml(html, type = 'info') {
+  statusEl.hidden = false;
+  statusEl.className = `status status-${type}`;
+  statusEl.innerHTML = html;
+}
+
 async function getActiveTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   return tab;
@@ -111,7 +117,15 @@ document.getElementById('btnCv').addEventListener('click', async () => {
     }
   });
   if (res && res.success && res.data.pdf) {
-    setStatus(`✅ CV gerado: ${res.data.pdf.split('/').pop()}`, 'success');
+    const apiUrl = apiUrlInput.value.trim().replace(/\/$/, '');
+    const filename = res.data.pdf.split('/').pop();
+    const fileUrl = `${apiUrl}/cvs/${encodeURIComponent(filename)}`;
+    setStatusHtml(`✅ CV gerado: <a href="${fileUrl}" target="_blank">${filename}</a> (iniciando download...)`, 'success');
+    try {
+      await chrome.downloads.download({ url: fileUrl, filename, saveAs: true });
+    } catch (dlErr) {
+      console.warn('Download automático falhou (abra pelo link):', dlErr);
+    }
   } else {
     setStatus(`❌ ${(res && res.error) || 'Falha ao gerar CV'}`, 'error');
   }
