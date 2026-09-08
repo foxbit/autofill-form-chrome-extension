@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "allow": [
+      "Read",
+      "Bash(node --check *)",
+      "Bash(python3 -c *)",
+      "Bash(git status*)",
+      "Bash(git log*)",
+      "Bash(git diff*)",
+      "Bash(git commit*)",
+      "Bash(git branch*)",
+      "Bash(ls *)",
+      "Bash(cat *)"
+    ],
+    "ask": [
+      "Edit(manifest.json)",
+      "Edit(CLAUDE.md)",
+      "Edit(.claude/*)",
+      "Bash(git push*)",
+      "Bash(rm *)"
+    ],
+    "deny": [
+      "Bash(npm install*)",
+      "Bash(npx *)",
+      "Bash(yarn*)",
+      "Bash(pip install*)"
+    ]
+  }
+}
