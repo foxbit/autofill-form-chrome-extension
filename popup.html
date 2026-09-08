@@ -8,33 +8,116 @@
 </head>
 <body>
   <header class="header">
-    <h1>🤖 Máquina de Vagas</h1>
-    <p class="subtitle">Autofill + captura via API do Hermes</p>
+    <div class="brand-mark" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M7.5 4.5h9l3 3v9l-3 3h-9l-3-3v-9l3-3Z"/>
+        <path d="M8.5 12h7M12 8.5v7"/>
+      </svg>
+    </div>
+    <div class="brand-copy">
+      <p class="eyebrow">ASSISTENTE DE CANDIDATURAS</p>
+      <h1>Máquina de Vagas</h1>
+    </div>
+    <span id="connectionBadge" class="connection-badge" data-state="idle">API não testada</span>
   </header>
 
   <main>
-    <section class="card">
-      <label class="field-label" for="apiUrl">URL da API do Hermes</label>
-      <input type="text" id="apiUrl" placeholder="http://127.0.0.1:8790" spellcheck="false">
+    <section id="targetCard" class="target-card" aria-labelledby="targetLabel">
+      <div class="section-header">
+        <p id="targetLabel" class="section-label">Página em foco</p>
+        <button id="btnRefreshPage" class="icon-button" type="button" aria-label="Atualizar página em foco" title="Atualizar página em foco">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M20 11a8.1 8.1 0 0 0-15.5-2M4 5v4h4"/>
+            <path d="M4 13a8.1 8.1 0 0 0 15.5 2M20 19v-4h-4"/>
+          </svg>
+        </button>
+      </div>
+      <div class="target-content">
+        <div class="target-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="8.5"/>
+            <path d="M3.8 12h16.4M12 3.5c2.1 2.3 3.2 5.1 3.2 8.5S14.1 18.2 12 20.5C9.9 18.2 8.8 15.4 8.8 12S9.9 5.8 12 3.5Z"/>
+          </svg>
+        </div>
+        <div class="target-copy">
+          <strong id="pageTitle">Identificando página…</strong>
+          <span id="pageHost">Aguarde um instante</span>
+        </div>
+      </div>
     </section>
 
-    <section class="actions">
-      <button id="btnTest" class="btn btn-ghost">Testar conexão</button>
-      <button id="btnReload" class="btn btn-ghost">🔄 Reanalisar página</button>
-      <button id="btnAutofill" class="btn btn-primary">✨ Autopreencher formulário</button>
-      <button id="btnCapture" class="btn btn-secondary">📥 Capturar vaga</button>
-      <button id="btnCv" class="btn btn-secondary">📄 Gerar CV p/ esta vaga</button>
+    <section class="settings-card" aria-labelledby="apiLabel">
+      <label id="apiLabel" class="field-label" for="apiUrl">Servidor Hermes</label>
+      <div class="input-wrap">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="4" y="4" width="16" height="16" rx="3"/>
+          <path d="M8 9h.01M8 15h.01M12 9h4M12 15h4"/>
+        </svg>
+        <input type="text" id="apiUrl" placeholder="http://127.0.0.1:8790" spellcheck="false" autocomplete="url">
+      </div>
     </section>
 
-    <div id="status" class="status" hidden></div>
+    <section class="actions" aria-label="Ações">
+      <button id="btnAutofill" class="btn btn-primary" type="button" data-action data-loading-label="Analisando formulário…">
+        <span class="button-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 3v3M12 18v3M4.2 6.2l2.1 2.1M17.7 17.7l2.1 2.1M3 12h3M18 12h3M4.2 17.8l2.1-2.1M17.7 6.3l2.1-2.1"/>
+            <circle cx="12" cy="12" r="4"/>
+          </svg>
+        </span>
+        <span class="button-label">Autopreencher formulário</span>
+      </button>
+
+      <div class="secondary-actions">
+        <button id="btnCapture" class="btn btn-secondary" type="button" data-action data-loading-label="Capturando vaga…">
+          <span class="button-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M5 8.5h14v10H5zM8 8.5v-2h8v2M9 13h6"/>
+            </svg>
+          </span>
+          <span class="button-label">Capturar vaga</span>
+        </button>
+        <button id="btnCv" class="btn btn-secondary" type="button" data-action data-loading-label="Gerando CV…">
+          <span class="button-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M7 3.5h7l3 3V20.5H7z"/>
+              <path d="M14 3.5v4h4M10 12h4M10 16h4"/>
+            </svg>
+          </span>
+          <span class="button-label">Gerar CV</span>
+        </button>
+      </div>
+
+      <button id="btnTest" class="text-button" type="button" data-action data-loading-label="Testando conexão…">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v6h-6"/>
+        </svg>
+        <span class="button-label">Testar conexão com o Hermes</span>
+      </button>
+    </section>
+
+    <div id="status" class="status" role="status" aria-live="polite" hidden></div>
 
     <div id="result" class="result" hidden>
+      <div class="result-title">Currículo gerado</div>
       <div id="resultName" class="result-name"></div>
       <div class="result-actions">
-        <button id="btnOpenCv" class="btn btn-secondary btn-small">📄 Abrir CV</button>
-        <button id="btnDownloadCv" class="btn btn-secondary btn-small">⬇ Baixar CV</button>
+        <button id="btnOpenCv" class="btn btn-secondary btn-small" type="button">Abrir</button>
+        <button id="btnDownloadCv" class="btn btn-secondary btn-small" type="button">Baixar</button>
       </div>
     </div>
+
+    <section class="activity-terminal" aria-labelledby="activityTitle">
+      <div class="terminal-header">
+        <div class="terminal-title">
+          <span class="terminal-dot" aria-hidden="true"></span>
+          <span id="activityTitle">Atividade</span>
+          <span id="terminalState" class="terminal-state" data-state="idle">em espera</span>
+        </div>
+        <button id="btnClearActivity" class="terminal-clear" type="button">Limpar</button>
+      </div>
+      <div id="activityLog" class="terminal-output" role="log" aria-live="off" aria-label="Registro de atividade"></div>
+    </section>
   </main>
 
   <script src="popup.js"></script>
