@@ -155,6 +155,27 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           break;
         }
 
+        case 'EXTRACT_JOB_INFO': {
+          const meta = (sel, attr) => {
+            const el = document.querySelector(sel);
+            return el ? (el.getAttribute(attr) || '').trim() : '';
+          };
+          const rawTitle = meta('meta[property="og:title"]', 'content') || document.title || '';
+          const titulo = rawTitle.replace(/\s*[|\-–·]\s*[^|\-–·]*$/, '').trim();
+          const empresa = meta('meta[property="og:site_name"]', 'content') ||
+            new URL(location.href).hostname.replace(/^www\./, '');
+          const observacoes = meta('meta[name="description"]', 'content').slice(0, 300);
+          sendResponse({
+            success: true,
+            titulo: titulo || rawTitle,
+            empresa,
+            local: '',
+            url: location.href,
+            observacoes
+          });
+          break;
+        }
+
         default:
           sendResponse({ success: false, error: 'Ação do script de conteúdo desconhecida' });
       }

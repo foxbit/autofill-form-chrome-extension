@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Recrutamento Autofill IA",
-  "version": "1.0",
-  "description": "Autopreenchimento inteligente para formulários de recrutamento usando Supabase e Google Gemini.",
+  "name": "Máquina de Vagas — Autofill",
+  "version": "2.0.0",
+  "description": "Autopreenchimento de formulários de candidatura + captura de vagas, consumindo a API da Máquina de Vagas (Hermes).",
   "permissions": [
     "storage",
     "tabs",
@@ -11,8 +11,8 @@
     "sidePanel"
   ],
   "host_permissions": [
-    "https://*.supabase.co/",
-    "https://generativelanguage.googleapis.com/",
+    "http://127.0.0.1:8790/*",
+    "http://localhost:8790/*",
     "*://*/*"
   ],
   "action": {
