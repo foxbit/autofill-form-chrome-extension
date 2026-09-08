@@ -112,25 +112,29 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             `Máquina de Vagas API: ${results.length} campo(s) resolvido(s), ${unmatched.length} para revisão manual.`
           );
 
-          // Auto-gera respostas para campos abertos não resolvidos (máx. 5),
-          // em paralelo — antes era uma chamada de cada vez.
+          // Campos abertos: a IA redige, mas a resposta NÃO entra no formulário
+          // sozinha. Regra do Hermes: fato do cofre é automático, opinião do
+          // candidato passa pelo Angelo. Voltam como sugestão para aprovação.
           const abertos = unmatched
             .filter((u) => u.type !== 'file' && !(u.options && u.options.length))
             .slice(0, 5);
           const geradas = await Promise.all(abertos.map(async (u) => {
             try {
               const g = await client.generateAnswer(u.label, contexto, '', idioma);
-              return g && g.resposta ? { fieldId: u.id, type: u.type, value: g.resposta, source: 'ia' } : null;
+              return g && g.resposta
+                ? { fieldId: u.id, question: u.label, type: u.type, value: g.resposta, source: 'ia' }
+                : null;
             } catch (e) {
               debugLogs.push(`[IA] falha p/ "${u.label}": ${e.message}`);
               return null;
             }
           }));
-          const validas = geradas.filter(Boolean);
-          results.push(...validas);
-          if (validas.length) debugLogs.push(`IA gerou ${validas.length} resposta(s).`);
+          const suggestions = geradas.filter(Boolean);
+          if (suggestions.length) {
+            debugLogs.push(`IA redigiu ${suggestions.length} resposta(s) — aguardando sua aprovação.`);
+          }
 
-          sendResponse({ success: true, results, unmatched, debugLogs });
+          sendResponse({ success: true, results, unmatched, suggestions, debugLogs });
           break;
         }
 

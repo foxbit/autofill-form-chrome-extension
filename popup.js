@@ -339,6 +339,14 @@ document.getElementById('btnAutofill').addEventListener('click', (event) => runA
     return setStatus((fillRes && fillRes.error) || 'Falha ao preparar o preenchimento.', 'error');
   }
 
+  for (const sugestao of fillRes.suggestions || []) {
+    const previa = String(sugestao.value || '').replace(/\s+/g, ' ').slice(0, 160);
+    addActivity(`Sugestão para “${sugestao.question}”: ${previa}${previa.length === 160 ? '…' : ''}`, 'info');
+  }
+  if ((fillRes.suggestions || []).length) {
+    addActivity('Respostas subjetivas não são preenchidas sozinhas — use o botão ⚡ no campo para revisar e aplicar.', 'info');
+  }
+
   const targets = new Map(fieldsRes.fields.map((field) => [field.id, field]));
   const resultsByFrame = new Map();
   for (const result of fillRes.results || []) {
