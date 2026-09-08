@@ -43,6 +43,28 @@ function sendToTab(tabId, message) {
   });
 }
 
+// Injeta o content script se ele ainda não estiver na aba (páginas abertas
+// antes de carregar/recarregar a extensão, ou navegação em SPA).
+async function ensureContentScript(tabId) {
+  const ping = await sendToTab(tabId, { type: 'PING' });
+  if (ping && ping.success) return true;
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: ['utils/dom-parser.js', 'utils/form-filler.js', 'content.js']
+    });
+    await chrome.scripting.insertCSS({
+      target: { tabId },
+      files: ['styles/content.css']
+    });
+  } catch (err) {
+    console.warn('Falha ao injetar content script:', err);
+    return false;
+  }
+  const again = await sendToTab(tabId, { type: 'PING' });
+  return !!(again && again.success);
+}
+
 // ─── carregar/salvar config ──────────────────────────────
 async function loadConfig() {
   const { apiUrl } = await chrome.storage.local.get(['apiUrl']);
@@ -54,6 +76,7 @@ apiUrlInput.addEventListener('change', async () => {
 
 // ─── extrair info da vaga da página (via content script) ──
 async function extractJobInfo(tabId) {
+  await ensureContentScript(tabId);
   const res = await sendToTab(tabId, { type: 'EXTRACT_JOB_INFO' });
   if (res && res.success) return res;
   // fallback: usa URL e título da aba
@@ -75,6 +98,9 @@ document.getElementById('btnTest').addEventListener('click', async () => {
 document.getElementById('btnReload').addEventListener('click', async () => {
   const tab = await getActiveTab();
   if (!tab) return setStatus('Nenhuma aba ativa.', 'error');
+  if (!(await ensureContentScript(tab.id))) {
+    return setStatus('❌ Não foi possível injetar a extensão nesta página.', 'error');
+  }
   setStatus('Reanalisando a página...', 'info');
   const res = await sendToTab(tab.id, { type: 'RESCAN_FORM' });
   if (res && res.success) {
@@ -87,6 +113,9 @@ document.getElementById('btnReload').addEventListener('click', async () => {
 document.getElementById('btnAutofill').addEventListener('click', async () => {
   const tab = await getActiveTab();
   if (!tab) return setStatus('Nenhuma aba ativa.', 'error');
+  if (!(await ensureContentScript(tab.id))) {
+    return setStatus('❌ Não foi possível injetar a extensão nesta página.', 'error');
+  }
 
   setStatus('Varrendo formulário...', 'info');
   const fieldsRes = await sendToTab(tab.id, { type: 'GET_FORM_FIELDS' });

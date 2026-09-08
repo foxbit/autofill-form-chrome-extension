@@ -86,6 +86,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   (async () => {
     try {
       switch (message.type) {
+        case 'PING': {
+          sendResponse({ success: true });
+          break;
+        }
+
         case 'GET_FORM_FIELDS': {
           // Perform a fresh scan to capture dynamic elements (Gupy, GreenHouse can render fields late)
           scanForm();
