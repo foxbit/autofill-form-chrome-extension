@@ -93,6 +93,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           break;
         }
 
+        case 'RESCAN_FORM': {
+          // Re-analisa a página inteira (útil para SPAs que trocam de formulário sem reload)
+          scanForm();
+          sendResponse({ success: true, fields: parsedFields.length, contexto: getPageContext() });
+          break;
+        }
+
         case 'AUTOFILL_FORM': {
           const { results } = message.payload;
           let filledCount = 0;

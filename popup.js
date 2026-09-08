@@ -72,6 +72,18 @@ document.getElementById('btnTest').addEventListener('click', async () => {
   else setStatus(`❌ ${(res && res.error) || 'Falha'}`, 'error');
 });
 
+document.getElementById('btnReload').addEventListener('click', async () => {
+  const tab = await getActiveTab();
+  if (!tab) return setStatus('Nenhuma aba ativa.', 'error');
+  setStatus('Reanalisando a página...', 'info');
+  const res = await sendToTab(tab.id, { type: 'RESCAN_FORM' });
+  if (res && res.success) {
+    setStatus(`✅ Página reanalisada: ${res.fields} campo(s) detectado(s).`, 'success');
+  } else {
+    setStatus(`❌ ${(res && res.error) || 'Falha ao reanalisar'}`, 'error');
+  }
+});
+
 document.getElementById('btnAutofill').addEventListener('click', async () => {
   const tab = await getActiveTab();
   if (!tab) return setStatus('Nenhuma aba ativa.', 'error');
