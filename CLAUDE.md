@@ -68,10 +68,11 @@ para autopreencher formulários de candidatura, capturar vagas e gerar currícul
 - **Limpeza** — remover listeners e DOM antigos antes de reinjetar
 
 ### Formulários (Plataformas)
-- **Gupy/Workday/GreenHouse** — heurísticas especiais no `dom-parser.js` (linhas 102-141)
-- **Comboboxes** — detectar e **ignorar** (isCombobox no dom-parser)
-- **SPAs** — simular digitação character-by-character com dispatch de eventos (form-filler)
-- **Campos já preenchidos** — pular (form-filler linhas 16-21)
+- **Gupy/Workday/GreenHouse** — heurísticas especiais no `dom-parser.js`
+- **Comboboxes** — **preencher** (digita, espera o listbox, clica na opção). Campos como País/Cidade são obrigatórios. O `dom-parser` ainda detecta combobox e os inclui no parse.
+- **SPAs (React/Vue)** — usar o **setter nativo do prototype** (`setNativeValue` no form-filler), NÃO digitação caractere-a-caractere. React instala um value tracker no node: atribuir `el.value` direto atualiza o tracker, mas o `input` event subsequente é descartado como "sem mudança" — o submit vai vazio. Setter nativo via `Object.getOwnPropertyDescriptor(proto, 'value')` preenche corretamente.
+- **Campos já preenchidos** — nunca sobrescrever o que o candidato já respondeu (text, textarea, combobox)
+- **Select/radio/checkbox** — casar opção por similaridade (`match_option`: exato → contenção → overlap de tokens), verificar o valor após preencher.
 
 ## API Endpoints (porta 8790)
 
@@ -79,7 +80,10 @@ para autopreencher formulários de candidatura, capturar vagas e gerar currícul
 |--------|------|-----|
 | GET | `/health` | Health check |
 | GET | `/profile` | Perfil canônico do cofre |
-| POST | `/fill` | Preenche campos (recebe `fields[]`, retorna `filled[]` + `unmatched[]`) |
+| POST | `/fill` | Preenche campos (SINCRONO; recebe `fields[]` com `type`, `options[]`, `required`, `multiple`, `standalone`, `accept`; retorna `filled[]` + `unmatched[]`, campos sensíveis voltam como `sensivel`) |
+| POST | `/fill-match` | Escolha de opção por IA (`fields[]`, `contexto`; valida via `match_option`, IA não inventa alternativa fora da lista) |
+| GET | `/arquivos` | Lista documentos fixos (cv pt/en + cover-letter pt/en) |
+| GET | `/arquivos/{tipo}` | Serve PDF (`tipo` = cv | cover-letter, `idioma` = pt | en) |
 | POST | `/learn` | Salva resposta aprendida (`pergunta`, `resposta`, `idioma`) |
 | GET | `/qa` | Busca resposta (`q=`, `limit=`) |
 | POST | `/generate` | Gera resposta via IA (`pergunta`, `contexto`, `instrucao`, `idioma`) |

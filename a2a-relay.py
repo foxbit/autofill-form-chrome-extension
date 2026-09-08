@@ -24,7 +24,7 @@ Fluxo:
 import json
 import time
 import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 from collections import defaultdict
 import uuid
@@ -33,6 +33,15 @@ import uuid
 inboxes = defaultdict(list)        # agente → [mensagens]
 waiters = defaultdict(list)        # agente → [Event objects]
 lock = threading.Lock()
+
+
+def _notify(agente):
+    """Acorda todos os pollers esperando por este agente."""
+    with lock:
+        evs = list(waiters.get(agente, []))
+        waiters[agente] = []
+    for ev in evs:
+        ev.set()
 
 # ── Handlers ───────────────────────────────────────────────────
 class RelayHandler(BaseHTTPRequestHandler):
@@ -81,18 +90,29 @@ class RelayHandler(BaseHTTPRequestHandler):
             agente = parts[1]
             qs = parse_qs(parsed.query)
             timeout = float(qs.get("timeout", ["30"])[0])
-            deadline = time.time() + timeout
 
-            while time.time() < deadline:
-                with lock:
-                    if inboxes[agente]:
-                        msgs = list(inboxes[agente])
-                        inboxes[agente].clear()
-                        return self._json({"agent": agente, "messages": msgs, "count": len(msgs)})
-                # Esperar com polling curto (0.2s)
-                remaining = deadline - time.time()
-                if remaining > 0:
-                    time.sleep(min(0.2, remaining))
+            # Lock-free fast path: se já tem mensagem, retorna na hora
+            with lock:
+                if inboxes[agente]:
+                    msgs = list(inboxes[agente])
+                    inboxes[agente].clear()
+                    return self._json({"agent": agente, "messages": msgs, "count": len(msgs)})
+
+            # Sem mensagem: registrar no waiter e bloquear até chegar algo
+            ev = threading.Event()
+            with lock:
+                if inboxes[agente]:
+                    msgs = list(inboxes[agente])
+                    inboxes[agente].clear()
+                    return self._json({"agent": agente, "messages": msgs, "count": len(msgs)})
+                waiters[agente].append(ev)
+            ev.wait(timeout)
+
+            with lock:
+                if inboxes[agente]:
+                    msgs = list(inboxes[agente])
+                    inboxes[agente].clear()
+                    return self._json({"agent": agente, "messages": msgs, "count": len(msgs)})
 
             return self._json({"agent": agente, "messages": [], "count": 0, "timeout": True})
 
@@ -123,6 +143,7 @@ class RelayHandler(BaseHTTPRequestHandler):
             with lock:
                 inboxes[to].append(entry)
 
+            _notify(to)  # acorda qualquer poller esperando por este destinatário
             print(f"[A2A] {fr} → {to}: {msg[:80]}...")
             return self._json({"ok": True, "id": msg_id, "queued_to": to})
 
@@ -150,7 +171,7 @@ class RelayHandler(BaseHTTPRequestHandler):
 # ── Main ───────────────────────────────────────────────────────
 if __name__ == "__main__":
     PORT = 8791
-    server = HTTPServer(("0.0.0.0", PORT), RelayHandler)
+    server = ThreadingHTTPServer(("0.0.0.0", PORT), RelayHandler)
     print(f"═══ A2A Relay Server rodando na porta {PORT} ═══")
     print(f"    POST http://192.168.0.33:{PORT}/send      — enviar mensagem")
     print(f"    GET  http://192.168.0.33:{PORT}/poll/hermes — polling")
