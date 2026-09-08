@@ -7,6 +7,21 @@
 
 ---
 
+## 0. Fluxo de Comunicação (Git como Ponte)
+
+Hermes (servidor 192.168.0.33) e Claude Code (máquina local de Angelo)
+não estão na mesma máquina. **O GitHub é o canal de comunicação:**
+
+```
+Claude Code (local) ──git push──→ GitHub ──git pull──→ Hermes (servidor)
+Hermes (servidor)   ──git push──→ GitHub ──git pull──→ Claude Code (local)
+```
+
+**Regra:** após cada commit com bloco `---a2a---`, fazer `git push`.
+**Regra:** antes de começar trabalho, fazer `git pull` para pegar mudanças do outro.
+
+---
+
 ## 1. Princípios Fundamentais
 
 ### 1.1 Divisão de Trabalho

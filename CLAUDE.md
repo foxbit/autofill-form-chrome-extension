@@ -131,6 +131,60 @@ Esta extensão é um componente da **Máquina de Vagas**, que inclui:
 **IMPORTANTE**: Alterações na API (`hermes-client.js`) devem ser validadas contra os endpoints reais.
 Se um endpoint mudar, o `CLAUDE.md` deve ser atualizado.
 
+## Comunicação A2A com Hermes (COMUNICAÇÃO DIRETA)
+
+Hermes Agent roda no servidor `192.168.0.33`. Para conversar diretamente
+com ele (perguntas, testes, validação de regras de negócio), use o relay HTTP:
+
+### Relay Server (porta 8791)
+
+```
+Servidor: http://192.168.0.33:8791
+```
+
+### Usando o helper `a2a.sh` (recomendado)
+
+```bash
+# Enviar mensagem para Hermes
+./a2a.sh send "Posso mudar o ícone do botão de upload?"
+
+# Enviar pergunta e esperar resposta (até 60s)
+./a2a.sh ask "Qual a regra de negócio para validação de CV?"
+
+# Ver mensagens pendentes
+./a2a.sh inbox
+
+# Poll com timeout customizado
+./a2a.sh poll 15
+
+# Verificar se relay está rodando
+./a2a.sh health
+```
+
+### Usando curl direto
+
+```bash
+# Enviar
+curl -X POST http://192.168.0.33:8791/send \
+  -H "Content-Type: application/json" \
+  -d '{"from":"claude","to":"hermes","msg":"Sua mensagem aqui"}'
+
+# Receber (long-poll, espera até ter mensagem)
+curl "http://192.168.0.33:8791/poll/claude?timeout=30"
+
+# Inbox (non-blocking)
+curl "http://192.168.0.33:8791/inbox/claude"
+```
+
+### Quando usar comunicação A2A
+
+- **ANTES** de mudar manifest.json ou endpoints de API
+- **PARA** validar regras de negócio antes de implementar
+- **PARA** reportar bugs encontrados no código existente
+- **PARA** pedir esclarecimentos sobre a arquitetura do ecossistema
+- **DEPOIS** de implementar feature significativa (notificar Hermes)
+- **SEMPRE** que algo não está claro no CLAUDE.md
+
 ## Checklist de PR (Claude deve verificar)
 
 - [ ] Todos os message types novos têm handler no background.js E content.js (se aplicável)

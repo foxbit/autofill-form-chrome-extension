@@ -10,7 +10,9 @@
       "Bash(git commit*)",
       "Bash(git branch*)",
       "Bash(ls *)",
-      "Bash(cat *)"
+      "Bash(cat *)",
+      "Bash(curl *192.168.0.33:8791*)",
+      "Bash(./a2a.sh *)"
     ],
     "ask": [
       "Edit(manifest.json)",
