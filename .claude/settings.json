@@ -29,18 +29,5 @@
       "Bash(yarn*)",
       "Bash(pip install*)"
     ]
-  },
-  "hooks": {
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/a2a-wake.sh",
-            "timeout": 15
-          }
-        ]
-      }
-    ]
   }
 }

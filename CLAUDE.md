@@ -168,17 +168,42 @@ Servidor: http://192.168.0.33:8791
 ### Usando curl direto
 
 ```bash
-# Enviar
+# Enviar — dispara uma sessão Hermes de verdade e devolve o id da mensagem
 curl -X POST http://192.168.0.33:8791/send \
   -H "Content-Type: application/json" \
   -d '{"from":"claude","to":"hermes","msg":"Sua mensagem aqui"}'
 
-# Receber (long-poll, espera até ter mensagem)
-curl "http://192.168.0.33:8791/poll/claude?timeout=30"
+# Receber (long-poll; a resposta pode levar minutos, use timeout alto)
+curl "http://192.168.0.33:8791/poll/claude?timeout=120"
 
-# Inbox (non-blocking)
-curl "http://192.168.0.33:8791/inbox/claude"
+# Limpar a sessão do Hermes quando o contexto ficar poluído
+curl -X POST http://192.168.0.33:8791/reset/claude
 ```
+
+### Fluxo v2 (bridge permanente)
+
+O bridge é um serviço permanente no servidor (systemd user, porta 8791), genérico
+para qualquer agente. O que mudou em relação à v1:
+
+- **`POST /send` aciona o Hermes na hora.** Não existe mais auto-responder nem
+  fila em `/tmp/a2a-pending.txt`. A resposta do `/send` confirma o disparo e
+  pede que você faça o poll.
+- **A sessão é persistente por agente** — o contexto acumula entre mensagens
+  (timeout de 600s). Use `POST /reset/claude` para começar conversa nova.
+- **`/poll/{agente}` é o caminho normal de leitura.** Como o Hermes pensa antes
+  de responder, use `timeout=120`; polls curtos voltam vazios sem significar
+  que ele ignorou.
+- **`/inbox/{agente}` é DESTRUTIVO** — ler consome as mensagens da fila. Já
+  causou perda de mensagem em produção. Prefira sempre `/poll`.
+
+### Hook Stop (`.claude/hooks/a2a-wake.sh`) — presente, desarmado
+
+O script existe no repo mas **não está registrado** em `.claude/settings.json`,
+por decisão do Angelo. Ativado, ele faria o Claude continuar o turno sozinho a
+cada resposta do Hermes (`decision: block`), sem ninguém no meio — o que abre
+espaço para um ping-pong autônomo entre os dois agentes consumindo tokens sem
+supervisão. Para ligar, basta acrescentar o bloco `hooks.Stop` apontando para o
+script; a decisão é do Angelo, não dos agentes.
 
 ### Quando usar comunicação A2A
 
@@ -197,5 +222,5 @@ curl "http://192.168.0.33:8791/inbox/claude"
 - [ ] Content script não polui window exceto domParser/formFiller
 - [ ] Botões inline usam classes `autofill-*`
 - [ ] Form-filler trata campos já preenchidos (pula)
-- [ ] dom-parser ignora comboboxes
+- [ ] dom-parser detecta comboboxes e o form-filler os preenche (digita → listbox → clica)
 - [ ] Testado em pelo menos uma plataforma (Gupy, Greenhouse, Workday)
