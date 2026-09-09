@@ -51,6 +51,17 @@ export class HermesClient {
     return await this._post('/fill', { fields });
   }
 
+  /**
+   * Pede à IA que escolha entre as opções dos campos que o /fill não resolveu
+   * (POST /fill-match). Rota separada por decisão do Hermes: /fill continua
+   * síncrono e sem IA.
+   * @param {Array<{id:string,label:string,type:string,options:string[]}>} fields
+   * @param {string} contexto - descrição da vaga
+   */
+  async fillMatch(fields, contexto = '') {
+    return await this._post('/fill-match', { fields, contexto });
+  }
+
   /** Grava/atualiza uma resposta aprendida (POST /learn). */
   async learn(pergunta, resposta, idioma = 'pt') {
     return await this._post('/learn', { pergunta, resposta, idioma });
@@ -76,5 +87,37 @@ export class HermesClient {
   /** Gera currículo personalizado em PDF (POST /cv). */
   async generateCv(payload) {
     return await this._post('/cv', payload);
+  }
+
+  /**
+   * Baixa um arquivo fixo do cofre (GET /arquivos/{tipo}) já em base64, porque
+   * é assim que ele atravessa o canal de mensagens até o content script.
+   * @param {'cv'|'cover-letter'} tipo
+   * @param {string} idioma
+   * @returns {Promise<{base64:string, fileName:string, mimeType:string}>}
+   */
+  async getArquivo(tipo, idioma = 'pt') {
+    const res = await fetch(
+      `${this.apiUrl}/arquivos/${encodeURIComponent(tipo)}?idioma=${encodeURIComponent(idioma)}`
+    );
+    if (!res.ok) {
+      const txt = await res.text();
+      throw new Error(`Hermes API ${res.status}: ${txt.slice(0, 200)}`);
+    }
+
+    const disposition = res.headers.get('content-disposition') || '';
+    const match = disposition.match(/filename\*?=(?:UTF-8'')?"?([^";]+)"?/i);
+    const fileName = decodeURIComponent(match ? match[1] : `${tipo}.pdf`);
+    const mimeType = res.headers.get('content-type') || 'application/pdf';
+    const buffer = await res.arrayBuffer();
+
+    // btoa em blocos: o service worker não tem FileReader e strings enormes
+    // estouram o limite de argumentos de String.fromCharCode
+    const bytes = new Uint8Array(buffer);
+    let binary = '';
+    for (let i = 0; i < bytes.length; i += 8192) {
+      binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 8192));
+    }
+    return { base64: btoa(binary), fileName, mimeType };
   }
 }
