@@ -66,6 +66,11 @@ para autopreencher formulários de candidatura, capturar vagas e gerar currícul
 - **Ids garantidos** — `dom-parser` atribui `id` a elementos sem id
 - **Separadores visuais** — classes CSS com prefixo `autofill-`
 - **Limpeza** — remover listeners e DOM antigos antes de reinjetar
+- **Toggle "Ativa na página"** — `chrome.storage.local.pageUiEnabled` (ausente = ligado).
+  Desligado, o content script não injeta botões nem destaques e limpa o que já
+  estava na página; a varredura continua, então o autopreenchimento pelo painel
+  segue funcionando. O painel só grava no storage — cada aba reage sozinha via
+  `chrome.storage.onChanged`, sem mensagem por aba.
 
 ### Formulários (Plataformas)
 - **Gupy/Workday/GreenHouse** — heurísticas especiais no `dom-parser.js`

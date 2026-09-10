@@ -135,6 +135,66 @@ main { display: grid; gap: 12px; margin-top: 16px; }
 .target-copy span { color: var(--muted); font-size: 12px; }
 
 .settings-card { padding: 12px; }
+
+.toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.toggle-copy { display: grid; gap: 2px; cursor: pointer; }
+.toggle-copy strong { color: var(--muted-strong); font-size: 12px; font-weight: 650; }
+.toggle-copy span { color: var(--muted); font-size: 11px; }
+
+.switch { position: relative; flex: none; width: 42px; height: 24px; cursor: pointer; }
+.switch input {
+  position: absolute;
+  opacity: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  cursor: pointer;
+}
+
+.switch-track {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  background: var(--surface-raised);
+  border: 1px solid var(--line-strong);
+  transition: background var(--ease), border-color var(--ease);
+}
+
+.switch-track::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--muted);
+  transition: transform var(--ease), background var(--ease);
+}
+
+.switch input:checked + .switch-track {
+  background: rgba(45, 212, 191, .22);
+  border-color: var(--primary);
+}
+
+.switch input:checked + .switch-track::after {
+  transform: translateX(18px);
+  background: var(--primary);
+}
+
+.switch input:focus-visible + .switch-track {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
 .field-label { display: block; color: var(--muted-strong); font-size: 12px; font-weight: 650; margin-bottom: 7px; }
 .input-wrap { position: relative; }
 .input-wrap > svg { position: absolute; top: 50%; left: 10px; width: 16px; height: 16px; color: var(--muted); pointer-events: none; transform: translateY(-50%); }

@@ -12,6 +12,8 @@ const pageHostEl = document.getElementById('pageHost');
 const targetCardEl = document.getElementById('targetCard');
 const connectionBadgeEl = document.getElementById('connectionBadge');
 const activityLogEl = document.getElementById('activityLog');
+const togglePageUiEl = document.getElementById('togglePageUi');
+const togglePageUiHintEl = document.getElementById('togglePageUiHint');
 const terminalStateEl = document.getElementById('terminalState');
 let lastCv = null;
 
@@ -269,9 +271,30 @@ function buildVagaTexto(info) {
 
 // ─── configurações ──────────────────────────────────────
 async function loadConfig() {
-  const { apiUrl } = await chrome.storage.local.get(['apiUrl']);
+  const { apiUrl, pageUiEnabled } = await chrome.storage.local.get(['apiUrl', 'pageUiEnabled']);
   apiUrlInput.value = apiUrl || 'http://127.0.0.1:8790';
+  setPageUiLabel(pageUiEnabled !== false);
 }
+
+/** Reflete o estado do toggle no painel (o content script lê do storage). */
+function setPageUiLabel(enabled) {
+  togglePageUiEl.checked = enabled;
+  togglePageUiHintEl.textContent = enabled
+    ? 'Botões ☁️ e ⚡ visíveis nos campos'
+    : 'Página limpa — nenhum botão ou destaque';
+}
+
+togglePageUiEl.addEventListener('change', async () => {
+  const enabled = togglePageUiEl.checked;
+  await chrome.storage.local.set({ pageUiEnabled: enabled });
+  setPageUiLabel(enabled);
+  addActivity(
+    enabled
+      ? 'Extensão ativa na página: botões restaurados nos campos.'
+      : 'Extensão desativada na página: botões e destaques removidos.',
+    enabled ? 'success' : 'info'
+  );
+});
 
 apiUrlInput.addEventListener('change', async () => {
   await chrome.storage.local.set({ apiUrl: apiUrlInput.value.trim() });

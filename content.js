@@ -8,6 +8,11 @@ let parsedFields = [];
 let originalValues = {};
 let autofilledValues = {};
 
+// Toggle do painel: quando desligado, a extensão não injeta nada na página
+// (sem botões ☁️/⚡ e sem destaque nos campos). O valor vive em
+// chrome.storage.local, então o estado vale para todas as abas de uma vez.
+let pageUiEnabled = true;
+
 // Helper to convert base64 to Blob for file uploads
 function base64ToBlob(base64, contentType = 'application/pdf') {
   const byteCharacters = atob(base64);
@@ -75,17 +80,62 @@ function readFieldValue(field) {
 function scanForm() {
   parsedFields = window.domParser.parseForm();
   originalValues = captureValues(parsedFields);
+
+  // Desligado: a varredura continua (o painel ainda preenche sob comando),
+  // mas a página fica limpa — nenhum botão, nenhum destaque.
+  if (!pageUiEnabled) {
+    clearInjectedUi();
+    console.log(`[Autofill IA] Varredura concluída (UI desligada). ${parsedFields.length} campos detectados.`);
+    return;
+  }
+
   highlightScannedFields(parsedFields);
   injectUploadButtons(parsedFields);
   console.log(`[Autofill IA] Varredura concluída. ${parsedFields.length} campos detectados.`);
 }
 
-// Initial scan when page content finishes loading
-if (document.readyState === 'complete' || document.readyState === 'interactive') {
-  scanForm();
-} else {
-  window.addEventListener('DOMContentLoaded', scanForm);
+/** Remove tudo que a extensão desenhou na página. */
+function clearInjectedUi() {
+  document.querySelectorAll('.autofill-upload-btn, .autofill-gen-btn').forEach(el => el.remove());
+  document.querySelectorAll('.autofill-scanned, .autofill-success, .autofill-failed').forEach(el => {
+    el.classList.remove('autofill-scanned', 'autofill-success', 'autofill-failed');
+  });
 }
+
+/** Aplica o estado do toggle na página, sem esperar nova varredura. */
+function applyPageUiState(enabled) {
+  pageUiEnabled = enabled !== false;
+  if (!pageUiEnabled) {
+    clearInjectedUi();
+    return;
+  }
+  if (parsedFields.length) {
+    highlightScannedFields(parsedFields);
+    injectUploadButtons(parsedFields);
+  } else {
+    scanForm();
+  }
+}
+
+// Initial scan when page content finishes loading
+function bootScan() {
+  chrome.storage.local.get(['pageUiEnabled'], ({ pageUiEnabled: salvo }) => {
+    pageUiEnabled = salvo !== false;   // ausente = ligado
+    scanForm();
+  });
+}
+
+if (document.readyState === 'complete' || document.readyState === 'interactive') {
+  bootScan();
+} else {
+  window.addEventListener('DOMContentLoaded', bootScan);
+}
+
+// O painel só grava no storage; cada aba reage por conta própria.
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'local' || !changes.pageUiEnabled) return;
+  applyPageUiState(changes.pageUiEnabled.newValue);
+});
 
 /**
  * Captura contexto da página (empresa/vaga) para a geração de respostas.
@@ -619,6 +669,7 @@ function getUploadButtonInsertionPoint(field) {
 
 function injectUploadButtons(fields) {
   document.querySelectorAll('.autofill-upload-btn, .autofill-gen-btn').forEach(el => el.remove());
+  if (!pageUiEnabled) return;
 
   fields.forEach(field => {
     if (field.type === 'file') return;
