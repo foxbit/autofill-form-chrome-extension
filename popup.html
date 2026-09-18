@@ -56,6 +56,23 @@
         <input type="text" id="apiUrl" placeholder="http://127.0.0.1:8790" spellcheck="false" autocomplete="url">
       </div>
 
+      <div class="model-field">
+        <label id="modelLabel" class="field-label" for="aiModel">Modelo de IA (opencode)</label>
+        <div class="model-row">
+          <div class="input-wrap">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="7" y="7" width="10" height="10" rx="2"/>
+              <path d="M10 3v4M14 3v4M10 17v4M14 17v4M3 10h4M3 14h4M17 10h4M17 14h4"/>
+            </svg>
+            <select id="aiModel" aria-describedby="modelHint" disabled>
+              <option value="">Padrão do servidor</option>
+            </select>
+          </div>
+          <button id="btnSaveModel" class="btn btn-secondary btn-save" type="button" disabled>Salvar</button>
+        </div>
+        <p id="modelHint" class="field-hint" data-tone="info">Carregando modelos…</p>
+      </div>
+
       <div class="toggle-row">
         <label class="toggle-copy" for="togglePageUi">
           <strong>Ativa na página</strong>

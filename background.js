@@ -13,9 +13,12 @@ let lastApiUrl = '';
 async function getClient() {
   const keys = await storageManager.getKeys();
   const apiUrl = keys.apiUrl || 'http://127.0.0.1:8790';
-  if (cachedHermes && lastApiUrl === apiUrl) return cachedHermes;
-  cachedHermes = new HermesClient(apiUrl);
-  lastApiUrl = apiUrl;
+  if (!cachedHermes || lastApiUrl !== apiUrl) {
+    cachedHermes = new HermesClient(apiUrl);
+    lastApiUrl = apiUrl;
+  }
+  // Lido a cada mensagem: o modelo salvo no painel vale já na próxima chamada
+  cachedHermes.modelo = keys.aiModel || '';
   return cachedHermes;
 }
 
@@ -29,6 +32,34 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           const client = new HermesClient(apiUrl);
           await client.testConnection();
           sendResponse({ success: true });
+          break;
+        }
+
+        case 'GET_MODELS': {
+          const { apiUrl } = message.payload || {};
+          const client = apiUrl ? new HermesClient(apiUrl) : await getClient();
+          const data = await client.listModels();
+          sendResponse({
+            success: true,
+            modelos: Array.isArray(data && data.modelos) ? data.modelos : [],
+            // efetivo = o que o servidor usa quando a chamada não traz modelo
+            efetivo: (data && (data.efetivo || data.padrao)) || '',
+            fonte: (data && data.fonte) || ''
+          });
+          break;
+        }
+
+        case 'SET_ACTIVE_MODEL': {
+          const { modelo } = message.payload || {};
+          const client = await getClient();
+          const data = modelo
+            ? await client.setActiveModel(modelo)
+            : await client.clearActiveModel();
+          sendResponse({
+            success: true,
+            ativo: (data && data.ativo) || '',
+            efetivo: (data && data.efetivo) || ''
+          });
           break;
         }
 

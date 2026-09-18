@@ -15,7 +15,13 @@ const activityLogEl = document.getElementById('activityLog');
 const togglePageUiEl = document.getElementById('togglePageUi');
 const togglePageUiHintEl = document.getElementById('togglePageUiHint');
 const terminalStateEl = document.getElementById('terminalState');
+const aiModelSelect = document.getElementById('aiModel');
+const btnSaveModel = document.getElementById('btnSaveModel');
+const modelHintEl = document.getElementById('modelHint');
 let lastCv = null;
+// Modelo gravado no storage (vazio = padrão do servidor) e o padrão que o servidor informa
+let savedModel = '';
+let serverDefaultModel = '';
 
 /**
  * Paginação do PDF do currículo — enviada ao Hermes em POST /cv.
@@ -271,8 +277,9 @@ function buildVagaTexto(info) {
 
 // ─── configurações ──────────────────────────────────────
 async function loadConfig() {
-  const { apiUrl, pageUiEnabled } = await chrome.storage.local.get(['apiUrl', 'pageUiEnabled']);
+  const { apiUrl, pageUiEnabled, aiModel } = await chrome.storage.local.get(['apiUrl', 'pageUiEnabled', 'aiModel']);
   apiUrlInput.value = apiUrl || 'http://127.0.0.1:8790';
+  savedModel = aiModel || '';
   setPageUiLabel(pageUiEnabled !== false);
 }
 
@@ -300,6 +307,118 @@ apiUrlInput.addEventListener('change', async () => {
   await chrome.storage.local.set({ apiUrl: apiUrlInput.value.trim() });
   setConnectionState('idle', 'API não testada');
   addActivity('Endereço do servidor Hermes atualizado.', 'info');
+  loadModels();
+});
+
+// ─── modelo de IA ───────────────────────────────────────
+function setModelHint(message, tone = 'info') {
+  modelHintEl.textContent = message;
+  modelHintEl.dataset.tone = tone;
+}
+
+function modelInUseText() {
+  if (savedModel) return `Em uso: ${savedModel}.`;
+  return serverDefaultModel
+    ? `Em uso: padrão do servidor (${serverDefaultModel}).`
+    : 'Em uso: padrão do servidor.';
+}
+
+function syncSaveModelButton() {
+  btnSaveModel.disabled = aiModelSelect.disabled || aiModelSelect.value === savedModel;
+}
+
+/** Preenche o seletor com os modelos que o servidor aceita (GET /modelos). */
+async function loadModels() {
+  aiModelSelect.disabled = true;
+  syncSaveModelButton();
+  setModelHint('Carregando modelos…');
+
+  const res = await sendToBackground({
+    type: 'GET_MODELS',
+    payload: { apiUrl: apiUrlInput.value.trim() }
+  });
+  const modelos = res && res.success ? res.modelos : [];
+  serverDefaultModel = res && res.success ? res.efetivo : '';
+
+  const opcoes = [['', serverDefaultModel
+    ? `Padrão do servidor (${serverDefaultModel})`
+    : 'Padrão do servidor']];
+  modelos.forEach((modelo) => opcoes.push([modelo, modelo]));
+  // O modelo salvo continua visível mesmo se o servidor deixou de oferecê-lo
+  const savedMissing = savedModel && !modelos.includes(savedModel);
+  if (savedMissing) {
+    opcoes.push([savedModel, modelos.length ? `${savedModel} (indisponível)` : savedModel]);
+  }
+
+  aiModelSelect.replaceChildren(...opcoes.map(([value, label]) => {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = label;
+    return option;
+  }));
+  aiModelSelect.value = savedModel;
+  aiModelSelect.disabled = !modelos.length && !savedModel;
+  syncSaveModelButton();
+
+  if (!res || !res.success) {
+    const error = (res && res.error) || 'sem resposta do servidor';
+    console.error('[Painel] Falha ao carregar modelos:', error);
+    setModelHint(/\b404\b/.test(error)
+      ? 'Este servidor ainda não lista modelos (GET /modelos). A IA usa o padrão dele.'
+      : `Não foi possível carregar os modelos: ${error}`, 'error');
+  } else if (!modelos.length) {
+    // Provedor fora do ar e sem cache: o servidor segue com o padrão dele
+    setModelHint(savedModel
+      ? `Catálogo de modelos indisponível agora. O modelo salvo (${savedModel}) continua sendo enviado.`
+      : 'Catálogo de modelos indisponível agora. A IA usa o padrão do servidor.', 'error');
+  } else if (savedMissing) {
+    setModelHint(`O modelo salvo (${savedModel}) não está mais no catálogo; a IA vai recusar. Escolha outro.`, 'error');
+  } else {
+    setModelHint(modelInUseText());
+  }
+}
+
+aiModelSelect.addEventListener('change', () => {
+  syncSaveModelButton();
+  if (aiModelSelect.value === savedModel) setModelHint(modelInUseText());
+  else setModelHint('Clique em Salvar para passar a usar este modelo.');
+});
+
+btnSaveModel.addEventListener('click', async () => {
+  const modelo = aiModelSelect.value;
+  btnSaveModel.disabled = true;
+  try {
+    await chrome.storage.local.set({ aiModel: modelo });
+  } catch (err) {
+    console.error('[Painel] Falha ao salvar modelo:', err);
+    setModelHint(`Não foi possível salvar: ${err.message}`, 'error');
+    syncSaveModelButton();
+    return;
+  }
+  savedModel = modelo;
+  syncSaveModelButton();
+
+  // Grava a escolha no servidor também: é o que alcança a automação sem
+  // request (cron do LinkedIn, cvgen por CLI). Vazio = limpa e volta ao padrão.
+  setModelHint('Salvando no servidor…');
+  const res = await sendToBackground({ type: 'SET_ACTIVE_MODEL', payload: { modelo } });
+  await loadModels();
+
+  if (!res || !res.success) {
+    const error = (res && res.error) || 'sem resposta do servidor';
+    console.error('[Painel] Falha ao gravar o modelo no servidor:', error);
+    setModelHint(`Salvo na extensão, mas não no servidor: ${error}`, 'error');
+    addActivity(`Modelo salvo só na extensão — o servidor não aceitou: ${error}`, 'error');
+    return;
+  }
+
+  setModelHint(modelInUseText(), 'success');
+  addActivity(
+    modelo
+      ? `Modelo de IA salvo: ${modelo}. Vale para a extensão e para as rotinas do servidor.`
+      : 'Modelo de IA: voltou para o padrão do servidor, aqui e no servidor.',
+    'success'
+  );
 });
 
 // ─── ações ──────────────────────────────────────────────
@@ -515,6 +634,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
 
 async function initialize() {
   await loadConfig();
+  loadModels();
   await refreshPageTarget();
   addActivity('Painel pronto. Escolha uma ação para iniciar.', 'info');
 }

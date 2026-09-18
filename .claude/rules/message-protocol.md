@@ -38,6 +38,8 @@ Todas as mensagens Chrome seguem este contrato.
 
 ### Background (background.js)
 - `TEST_CONNECTIONS` — testa conexão com API
+- `GET_MODELS` — lista os modelos de IA do servidor via /modelos (`payload.apiUrl` opcional)
+- `SET_ACTIVE_MODEL` — grava o modelo escolhido no servidor (`payload.modelo`; vazio = DELETE /modelos/ativo)
 - `GET_STATUS` — verifica se API está ok
 - `AUTOFILL_FIELDS` — envia campos para API /fill
 - `SAVE_ANSWERS` — salva múltiplas respostas via /learn

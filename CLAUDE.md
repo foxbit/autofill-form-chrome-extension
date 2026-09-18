@@ -41,7 +41,7 @@ para autopreencher formulários de candidatura, capturar vagas e gerar currícul
 | `utils/hermes-client.js` | Cliente HTTP para a API (`/health`, `/fill`, `/learn`, `/generate`, `/capture`, `/cv`) | Claude |
 | `utils/dom-parser.js` | Descoberta de campos (labels, aria, placeholders, heurísticas) | Claude |
 | `utils/form-filler.js` | Preenchimento com simulação de digitação (SPAs) | Claude |
-| `utils/storage-manager.js` | Chrome storage (apiUrl, idioma) | Claude |
+| `utils/storage-manager.js` | Chrome storage (apiUrl, idioma, aiModel) | Claude |
 | `styles/content.css` | Estilos injetados (highlight, modais, toast, botões) | Claude |
 | `CLAUDE.md` | Contexto do projeto (este arquivo) | Hermes |
 
@@ -88,15 +88,25 @@ para autopreencher formulários de candidatura, capturar vagas e gerar currícul
 | GET | `/health` | Health check |
 | GET | `/profile` | Perfil canônico do cofre |
 | POST | `/fill` | Preenche campos (SINCRONO; recebe `fields[]` com `type`, `options[]`, `required`, `multiple`, `standalone`, `accept`; retorna `filled[]` + `unmatched[]`, campos sensíveis voltam como `sensivel`) |
-| POST | `/fill-match` | Escolha de opção por IA (`fields[]`, `contexto`; valida via `match_option`, IA não inventa alternativa fora da lista) |
+| POST | `/fill-match` | Escolha de opção por IA (`fields[]`, `contexto`, `modelo?`; valida via `match_option`, IA não inventa alternativa fora da lista) |
 | GET | `/arquivos` | Lista documentos fixos (cv pt/en + cover-letter pt/en) |
 | GET | `/arquivos/{tipo}` | Serve PDF (`tipo` = cv | cover-letter, `idioma` = pt | en) |
 | POST | `/learn` | Salva resposta aprendida (`pergunta`, `resposta`, `idioma`) |
 | GET | `/qa` | Busca resposta (`q=`, `limit=`) |
-| POST | `/generate` | Gera resposta via IA (`pergunta`, `contexto`, `instrucao`, `idioma`) |
+| POST | `/generate` | Gera resposta via IA (`pergunta`, `contexto`, `instrucao`, `idioma`, `modelo?`) |
+| GET | `/modelos` | Catálogo de modelos de IA: `modelos[]` (ids crus, ex. `glm-5.3`), `padrao`, `ativo`, `efetivo`, `fonte` |
+| POST/DELETE | `/modelos/ativo` | Modelo ativo no servidor (`modelo`); o painel grava ao salvar. Vale também para cron/CLI |
 | POST | `/capture` | Registra vaga no banco |
-| POST | `/cv` | Gera currículo PDF personalizado |
+| POST | `/cv` | Gera currículo PDF personalizado (usa IA; `modelo?`) |
 | GET | `/cvs/{filename}` | Download de CV gerado |
+
+### Modelo de IA
+- Rotas que chamam o LLM: `/generate`, `/fill-match` e `/cv`. As demais (`/fill`, `/capture`, `/learn`, `/qa`…) não usam IA.
+- `modelo` é opcional (string|null). Vazio = modelo `efetivo` do servidor. Id fora do catálogo = **422**
+  (`modelo desconhecido: X`). Com o catálogo indisponível (`modelos: []`) a validação fica permissiva.
+- Precedência no servidor: `modelo` do corpo > ativo no servidor > `OPENCODE_MODEL` > fallback do código.
+- O catálogo pode listar modelos que o provedor recusa (502 `Model is unavailable`). Modelos de raciocínio
+  podem devolver vazio no `/fill-match` (`max_tokens` baixo) e o campo cai em `unmatched`.
 
 ## Fluxos Principais
 
@@ -125,6 +135,18 @@ Botão ☁️ → CHECK_QUESTION → se existe: modal sobrescrever
                            → se novo: modal validar pergunta+resposta
 → SAVE_SINGLE_ANSWER → API /learn
 ```
+
+### Modelo de IA (painel)
+```
+loadModels → GET_MODELS (background) → GET /modelos → seletor
+Salvar → chrome.storage.local.aiModel  (extensão)
+       → SET_ACTIVE_MODEL → POST /modelos/ativo (servidor; vazio = DELETE)
+getClient() lê aiModel a cada mensagem → HermesClient._comModelo() acrescenta
+`modelo` em /generate, /fill-match e /cv
+```
+- Salvar grava nos dois lugares: no storage (o que a extensão envia) e no servidor
+  (o que a automação sem request usa). Se o servidor recusar, a extensão mantém a
+  escolha local e o painel avisa que o servidor ficou de fora.
 
 ### Capturar Vaga
 ```
