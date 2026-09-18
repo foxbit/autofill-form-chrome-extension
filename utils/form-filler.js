@@ -86,9 +86,12 @@ window.formFiller = {
    * Main entry point to fill a logical field with a value
    * @param {object} field - Field metadata parsed by dom-parser.js
    * @param {any} value - Value to fill (string, or Blob for files)
+   * @param {object} [options]
+   * @param {boolean} [options.overwrite] - Replace text already in the field. Only for
+   *   an answer the person approved for that field (⚡ modal); bulk autofill never sets it.
    * @returns {Promise<{ok: boolean, reason?: string, applied?: string}>}
    */
-  async fill(field, value) {
+  async fill(field, value, options = {}) {
     if (value === null || value === undefined || value === '') {
       return { ok: false, reason: 'sem valor' };
     }
@@ -97,7 +100,7 @@ window.formFiller = {
     if (!el) return { ok: false, reason: 'campo não está mais na página' };
 
     // Never overwrite what the person already answered
-    if (['text', 'textarea', 'combobox'].includes(field.type) && el.value && el.value.trim() !== '') {
+    if (!options.overwrite && ['text', 'textarea', 'combobox'].includes(field.type) && el.value && el.value.trim() !== '') {
       return { ok: false, reason: 'já preenchido' };
     }
     if (field.type === 'file' && el.files && el.files.length > 0) {

@@ -76,7 +76,9 @@ para autopreencher formulários de candidatura, capturar vagas e gerar currícul
 - **Gupy/Workday/GreenHouse** — heurísticas especiais no `dom-parser.js`
 - **Comboboxes** — **preencher** (digita, espera o listbox, clica na opção). Campos como País/Cidade são obrigatórios. O `dom-parser` ainda detecta combobox e os inclui no parse.
 - **SPAs (React/Vue)** — usar o **setter nativo do prototype** (`setNativeValue` no form-filler), NÃO digitação caractere-a-caractere. React instala um value tracker no node: atribuir `el.value` direto atualiza o tracker, mas o `input` event subsequente é descartado como "sem mudança" — o submit vai vazio. Setter nativo via `Object.getOwnPropertyDescriptor(proto, 'value')` preenche corretamente.
-- **Campos já preenchidos** — nunca sobrescrever o que o candidato já respondeu (text, textarea, combobox)
+- **Campos já preenchidos** — nunca sobrescrever o que o candidato já respondeu (text, textarea, combobox).
+  Única exceção: a resposta aprovada no modal ⚡, que é pedida para aquele campo — usa
+  `formFiller.fill(field, valor, { overwrite: true })` e o modal avisa que vai substituir.
 - **Select/radio/checkbox** — casar opção por similaridade (`match_option`: exato → contenção → overlap de tokens), verificar o valor após preencher.
 
 ## API Endpoints (porta 8790)
@@ -107,9 +109,15 @@ popup → AUTOFILL_FORM (content) → form-filler.fill() sequencial
 
 ### Gerar Resposta IA (por campo)
 ```
-Botão ⚡ → modal com instrução opcional → GENERATE_ANSWER (background)
-→ API /generate → resposta → modal de aprovação → form-filler.fill()
+Botão ⚡ → modal (reabre com a última resposta salva, se houver)
+→ Gerar / Gerar novamente → GENERATE_ANSWER (background) → API /generate
+→ resposta (editável) → Aprovar e preencher → form-filler.fill(..., { overwrite: true })
 ```
+- A última resposta de cada pergunta fica em `chrome.storage.local`, chave
+  `generatedAnswer::<origin><pathname>::<pergunta normalizada>` (resposta, instrução,
+  data). Edições feitas no modal também são guardadas ao fechar. Limite de 200 entradas.
+- Antes de preencher, o campo é reencontrado pela pergunta se o site recriou o nó
+  enquanto o modal estava aberto. Falha no preenchimento mostra o motivo e mantém o modal aberto.
 
 ### Aprender (salvar correção)
 ```

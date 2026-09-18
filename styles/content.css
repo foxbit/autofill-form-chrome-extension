@@ -199,6 +199,31 @@
   background-color: #4f46e5 !important;
 }
 
+.autofill-modal-btn-secondary {
+  background-color: transparent !important;
+  color: #a5b4fc !important; /* Indigo 300 */
+  border: 1px solid #6366f1 !important;
+}
+.autofill-modal-btn-secondary:hover {
+  background-color: rgba(99, 102, 241, 0.12) !important;
+}
+
+.autofill-modal-btn:disabled {
+  opacity: 0.6 !important;
+  cursor: not-allowed !important;
+}
+
+.autofill-modal-hint {
+  font-size: 12px !important;
+  color: #94a3b8 !important;
+  line-height: 1.4 !important;
+}
+
+/* Classes com display !important venceriam o atributo hidden */
+.autofill-modal-overlay [hidden] {
+  display: none !important;
+}
+
 /* Loading Spinner Keyframes */
 @keyframes spin {
   from {

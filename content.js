@@ -838,11 +838,68 @@ async function saveAnswerToServer(field, question, answer) {
   }
 }
 
-function handleGenerateClick(field) {
-  showGenerateModal(field);
+// A última resposta gerada pelo ⚡ fica guardada por página + pergunta: reabrir
+// o modal mostra essa versão em vez de gastar outra geração.
+const GENERATED_ANSWER_PREFIX = 'generatedAnswer::';
+const MAX_GENERATED_ANSWERS = 200;
+
+function generatedAnswerKey(field) {
+  const pergunta = window.formFiller.normalize(field.question);
+  return `${GENERATED_ANSWER_PREFIX}${location.origin}${location.pathname}::${pergunta}`;
 }
 
-function showGenerateModal(field) {
+async function loadGeneratedAnswer(field) {
+  try {
+    const key = generatedAnswerKey(field);
+    const data = await chrome.storage.local.get(key);
+    return data[key] || null;
+  } catch (err) {
+    console.warn('[Autofill IA] Não foi possível ler a resposta gerada salva:', err);
+    return null;
+  }
+}
+
+async function saveGeneratedAnswer(field, resposta, instrucao) {
+  try {
+    await chrome.storage.local.set({
+      [generatedAnswerKey(field)]: { resposta, instrucao, updatedAt: Date.now() }
+    });
+    await pruneGeneratedAnswers();
+  } catch (err) {
+    console.warn('[Autofill IA] Não foi possível salvar a resposta gerada:', err);
+  }
+}
+
+/** Mantém só as respostas mais recentes, para o storage não crescer sem limite. */
+async function pruneGeneratedAnswers() {
+  const all = await chrome.storage.local.get(null);
+  const excess = Object.entries(all)
+    .filter(([key]) => key.startsWith(GENERATED_ANSWER_PREFIX))
+    .sort(([, a], [, b]) => (b.updatedAt || 0) - (a.updatedAt || 0))
+    .slice(MAX_GENERATED_ANSWERS)
+    .map(([key]) => key);
+  if (excess.length) await chrome.storage.local.remove(excess);
+}
+
+/**
+ * O campo guardado no clique do ⚡ pode ter sido recriado pelo site enquanto o
+ * modal estava aberto (React/Vue remontam o nó e o atributo da extensão some).
+ * Nesse caso reencontra o campo pela pergunta numa varredura nova.
+ */
+function resolveLiveField(field) {
+  if (window.domParser.getElement(field.elementIds[0])) return field;
+  const current = window.domParser.parseForm();
+  return current.find(f => f.id === field.id) ||
+    current.find(f => f.type === field.type && f.question === field.question) ||
+    null;
+}
+
+async function handleGenerateClick(field) {
+  const salva = await loadGeneratedAnswer(field);
+  showGenerateModal(field, salva);
+}
+
+function showGenerateModal(field, salva) {
   const overlay = document.createElement('div');
   overlay.className = 'autofill-modal-overlay';
   overlay.innerHTML = `
@@ -858,60 +915,145 @@ function showGenerateModal(field) {
           <label class="autofill-modal-label">Instrução (opcional)</label>
           <textarea class="autofill-modal-textarea autofill-instrucao-input" rows="3" placeholder="Ex.: mencionar minha experiência com fintech e design systems"></textarea>
         </div>
-        <div id="autofill-gen-result" hidden>
+        <div class="autofill-modal-group autofill-gen-result" hidden>
           <label class="autofill-modal-label">Resposta gerada</label>
           <textarea class="autofill-modal-textarea autofill-gen-answer" rows="5"></textarea>
+          <div class="autofill-modal-hint autofill-gen-hint" hidden></div>
         </div>
       </div>
       <div class="autofill-modal-footer">
-        <button class="autofill-modal-btn autofill-modal-btn-cancel">Cancelar</button>
-        <button class="autofill-modal-btn autofill-modal-btn-confirm autofill-gen-submit">Gerar</button>
+        <button type="button" class="autofill-modal-btn autofill-modal-btn-cancel">Cancelar</button>
+        <button type="button" class="autofill-modal-btn autofill-modal-btn-confirm autofill-gen-submit">Gerar</button>
+        <button type="button" class="autofill-modal-btn autofill-modal-btn-confirm autofill-gen-apply" hidden>Aprovar e preencher</button>
       </div>
     </div>
   `;
   document.body.appendChild(overlay);
 
-  const close = () => overlay.remove();
   const cancelBtn = overlay.querySelector('.autofill-modal-btn-cancel');
-  const submitBtn = overlay.querySelector('.autofill-gen-submit');
+  const generateBtn = overlay.querySelector('.autofill-gen-submit');
+  const applyBtn = overlay.querySelector('.autofill-gen-apply');
   const instrucaoEl = overlay.querySelector('.autofill-instrucao-input');
-  const resultEl = overlay.querySelector('#autofill-gen-result');
+  const resultEl = overlay.querySelector('.autofill-gen-result');
   const answerEl = overlay.querySelector('.autofill-gen-answer');
-  let generated = '';
+  const hintEl = overlay.querySelector('.autofill-gen-hint');
+
+  // Versão já gravada no storage; edições feitas no modal são guardadas ao fechar
+  let savedAnswer = salva ? salva.resposta : '';
+  let busy = false;
+
+  const setBusy = (value) => {
+    busy = value;
+    generateBtn.disabled = value;
+    applyBtn.disabled = value;
+  };
+
+  const showAnswer = (resposta, savedAt) => {
+    answerEl.value = resposta;
+    resultEl.hidden = false;
+    applyBtn.hidden = false;
+    generateBtn.textContent = 'Gerar novamente';
+    generateBtn.classList.replace('autofill-modal-btn-confirm', 'autofill-modal-btn-secondary');
+
+    const avisos = [];
+    if (savedAt) {
+      const quando = new Date(savedAt).toLocaleString('pt-BR', {
+        day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'
+      });
+      avisos.push(`Resposta gerada em ${quando}.`);
+    }
+    if (['text', 'textarea', 'combobox'].includes(field.type) && !isFieldEmpty(field)) {
+      avisos.push('O campo já tem texto; ao aprovar, ele será substituído.');
+    }
+    hintEl.textContent = avisos.join(' ');
+    hintEl.hidden = !avisos.length;
+  };
+
+  if (salva && salva.resposta) {
+    instrucaoEl.value = salva.instrucao || '';
+    showAnswer(salva.resposta, salva.updatedAt);
+  }
+
+  const close = () => {
+    const atual = answerEl.value.trim();
+    if (atual && atual !== savedAnswer) {
+      savedAnswer = atual;
+      saveGeneratedAnswer(field, atual, instrucaoEl.value.trim());
+    }
+    overlay.remove();
+  };
 
   cancelBtn.addEventListener('click', close);
   overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
 
-  submitBtn.addEventListener('click', async () => {
-    if (!generated) {
-      submitBtn.disabled = true;
-      submitBtn.textContent = 'Gerando...';
-      const resp = await new Promise((resolve) => {
+  generateBtn.addEventListener('click', async () => {
+    if (busy) return;
+    setBusy(true);
+    const label = generateBtn.textContent;
+    generateBtn.textContent = 'Gerando...';
+    const instrucao = instrucaoEl.value.trim();
+
+    const resp = await new Promise((resolve) => {
+      try {
         chrome.runtime.sendMessage({
           type: 'GENERATE_ANSWER',
           payload: {
             pergunta: field.question,
             contexto: getPageContext(),
-            instrucao: instrucaoEl.value.trim(),
+            instrucao,
             idioma: /[a-zA-Z]/.test(field.question) && !/[áéíóúâêôãõç]/.test(field.question) ? 'en' : 'pt'
           }
-        }, resolve);
-      });
-      submitBtn.disabled = false;
-      if (!resp || !resp.success) {
-        showToast(`Erro: ${(resp && resp.error) || 'falha ao gerar'}`, 'error');
-        submitBtn.textContent = 'Gerar';
-        return;
+        }, (response) => {
+          if (chrome.runtime.lastError) {
+            resolve({ success: false, error: chrome.runtime.lastError.message });
+            return;
+          }
+          resolve(response);
+        });
+      } catch (err) {
+        resolve({ success: false, error: err.message });
       }
-      generated = resp.resposta;
-      answerEl.value = generated;
-      resultEl.hidden = false;
-      submitBtn.textContent = 'Aprovar e preencher';
-    } else {
-      close();
-      await window.formFiller.fill(field, generated);
-      showToast('Resposta preenchida.', 'success');
+    });
+
+    setBusy(false);
+    generateBtn.textContent = label;
+    const resposta = resp && resp.success ? String(resp.resposta || '').trim() : '';
+    if (!resposta) {
+      console.error('[Autofill IA] Falha ao gerar resposta:', resp);
+      showToast(`Erro: ${(resp && resp.error) || 'falha ao gerar'}`, 'error');
+      return;
     }
+
+    savedAnswer = resposta;
+    showAnswer(resposta);
+    await saveGeneratedAnswer(field, resposta, instrucao);
+  });
+
+  applyBtn.addEventListener('click', async () => {
+    if (busy) return;
+    // Vale o texto que está no modal, inclusive se a pessoa editou
+    const resposta = answerEl.value.trim();
+    if (!resposta) {
+      showToast('A resposta não pode ficar vazia.', 'error');
+      return;
+    }
+
+    setBusy(true);
+    const alvo = resolveLiveField(field);
+    // A pessoa aprovou esta resposta para este campo: substitui o que houver nele
+    const outcome = alvo
+      ? await window.formFiller.fill(alvo, resposta, { overwrite: true })
+      : { ok: false, reason: 'campo não está mais na página' };
+    setBusy(false);
+
+    if (!outcome || !outcome.ok) {
+      console.warn(`[Autofill IA] Não preencheu "${field.question}":`, outcome);
+      showToast(`Não foi possível preencher: ${(outcome && outcome.reason) || 'falhou'}`, 'error');
+      return;
+    }
+
+    close();
+    showToast('Resposta preenchida.', 'success');
   });
 }
 
