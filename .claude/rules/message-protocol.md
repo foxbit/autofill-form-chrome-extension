@@ -34,7 +34,8 @@ Todas as mensagens Chrome seguem este contrato.
 - `RESCAN_FORM` — re-scana a página inteira
 - `AUTOFILL_FORM` — preenche campos com resultados da API
 - `GET_MODIFIED_FIELDS` — detecta campos modificados pelo usuário
-- `EXTRACT_JOB_INFO` — extrai metadados da vaga da página
+- `EXTRACT_JOB_INFO` — extrai metadados da vaga da página (no LinkedIn, a vaga em foco; devolve `job_id`, `plataforma` e a `url` canônica)
+- `EXTRACT_JOB_LIST` — vagas listadas na página (busca do LinkedIn): `vagas[]` com `job_id`, `titulo`, `empresa`, `local`, `url`; `fonte`, `plataforma`, `focoJobId`
 
 ### Background (background.js)
 - `TEST_CONNECTIONS` — testa conexão com API
@@ -46,5 +47,6 @@ Todas as mensagens Chrome seguem este contrato.
 - `SAVE_SINGLE_ANSWER` — salva uma resposta via /learn
 - `CHECK_QUESTION` — busca resposta existente via /qa
 - `GENERATE_ANSWER` — gera resposta via IA /generate
-- `CAPTURE_VAGA` — registra vaga via /capture
+- `CAPTURE_VAGA` — registra uma vaga via /capture, pulando a que já existe no banco (`duplicada: true`, `existente`)
+- `CAPTURE_VAGAS` — registra várias (`vagas[]`, `plataforma`); devolve `itens[]` com `estado` nova | duplicada | falha e `banco_total`
 - `GENERATE_CV` — gera CV via /cv

@@ -96,7 +96,8 @@ para autopreencher formulários de candidatura, capturar vagas e gerar currícul
 | POST | `/generate` | Gera resposta via IA (`pergunta`, `contexto`, `instrucao`, `idioma`, `modelo?`) |
 | GET | `/modelos` | Catálogo de modelos de IA: `modelos[]` (ids crus, ex. `glm-5.3`), `padrao`, `ativo`, `efetivo`, `fonte` |
 | POST/DELETE | `/modelos/ativo` | Modelo ativo no servidor (`modelo`); o painel grava ao salvar. Vale também para cron/CLI |
-| POST | `/capture` | Registra vaga no banco |
+| POST | `/capture` | Registra vaga no banco (`titulo`, `empresa`, `local`, `url`, `origem[]`). Devolve `{ok, duplicada, arquivo, banco_total}`: se a vaga já existe, `duplicada: true` e nada é regravado (lock compartilhado com o cron). `job_id` e `observacoes` são aceitos mas ignorados: o id sai da `url` (`/jobs/view/{id}/`); fora do LinkedIn, mandar a URL com query (o servidor tira fragmento e `utm_*`/`gclid` e ordena os parâmetros) |
+| GET | `/vagas` | Banco de vagas: `{total, vagas[]}` com `job_id`, `url`, `status`, `origem`, `arquivo`. Filtros: `status`, `job_id`, `url` |
 | POST | `/cv` | Gera currículo PDF personalizado (usa IA; `modelo?`) |
 | GET | `/cvs/{filename}` | Download de CV gerado |
 
@@ -150,9 +151,24 @@ getClient() lê aiModel a cada mensagem → HermesClient._comModelo() acrescenta
 
 ### Capturar Vaga
 ```
-EXTRACT_JOB_INFO (content) → metadados da página
-→ CAPTURE_VAGA (background) → API /capture → banco
+popup → EXTRACT_JOB_INFO + EXTRACT_JOB_LIST (content)
+  lista com 2+ vagas → painel mostra as vagas com checkbox → CAPTURE_VAGAS
+  senão            → CAPTURE_VAGA
+background → GET /vagas (dedup por job_id ou url) → POST /capture só nas novas
 ```
+- **Nunca regravar**: duas barreiras. O background lê `/vagas` antes de cada envio e pula o
+  que já existe (simples e lote); se `/vagas` falhar, a captura é abortada. E o servidor
+  devolve `duplicada: true` sem regravar quando a vaga já existe (cobre a corrida com o cron).
+- **Origem**: `["extensao", "linkedin"]` no LinkedIn, `["extensao"]` no resto
+  (`linkedin-jobs-search` é a coleta do cron).
+- **LinkedIn** (`content.js`, seção LinkedIn): três DOMs convivem — interface nova (2026,
+  classes ofuscadas; card = `div[role=button][componentkey="job-card-component-ref-<id>"]`,
+  empresa em `aria-label="Company, X."`, título/empresa também no `<title>` "Cargo | Empresa | LinkedIn"),
+  clássica logada (`li[data-occludable-job-id]`, `.job-details-jobs-unified-top-card__*`) e
+  pública (`.base-card[data-entity-urn]`, `.topcard__*`). A vaga em foco vem de `/jobs/view/<id>`
+  ou `?currentJobId=<id>`; a URL enviada é sempre a canônica `https://www.linkedin.com/jobs/view/<id>/`.
+  A lista cobre só a página de resultados atual (25 cards), sem paginação.
+  Na interface nova a descrição ("About the job") carrega de forma preguiçosa e pode vir vazia.
 
 ### Gerar CV
 ```

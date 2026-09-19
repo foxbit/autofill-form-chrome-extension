@@ -22,6 +22,69 @@ async function getClient() {
   return cachedHermes;
 }
 
+/** Chave de comparação de URL: sem hash, sem barra final, minúscula. */
+function chaveUrl(url) {
+  return String(url || '').trim().replace(/#.*$/, '').replace(/\/+$/, '').toLowerCase();
+}
+
+/**
+ * Registra vagas no banco pulando as que já existem. O POST /capture
+ * sobrescreve o arquivo da vaga (e volta o status para "nova"), então a
+ * checagem contra GET /vagas vem antes de cada envio. Quando a API passar a
+ * devolver `duplicada`, ela também é respeitada.
+ * @returns {Promise<{itens:Array, banco_total:number}>} um item por vaga,
+ *   com estado "nova" | "duplicada" | "falha"
+ */
+async function capturarVagas(client, vagas, plataforma) {
+  const origem = plataforma === 'linkedin' ? ['extensao', 'linkedin'] : ['extensao'];
+  const existentes = new Map();   // job_id ou chave de url -> vaga do banco
+  let bancoTotal = null;
+  try {
+    const banco = await client.listVagas();
+    bancoTotal = banco.total;
+    for (const v of banco.vagas || []) {
+      if (v.job_id) existentes.set(String(v.job_id), v);
+      if (v.url) existentes.set(chaveUrl(v.url), v);
+    }
+  } catch (e) {
+    // Sem a lista não dá para garantir que nada será sobrescrito
+    throw new Error(`não foi possível ler o banco de vagas para evitar duplicatas: ${e.message}`);
+  }
+
+  const itens = [];
+  for (const vaga of vagas) {
+    const existente = (vaga.job_id && existentes.get(String(vaga.job_id))) || existentes.get(chaveUrl(vaga.url));
+    if (existente) {
+      itens.push({ ...vaga, estado: 'duplicada', existente: { status: existente.status, arquivo: existente.arquivo } });
+      continue;
+    }
+    try {
+      const data = await client.captureVaga({
+        titulo: vaga.titulo,
+        empresa: vaga.empresa || '',
+        local: vaga.local || '',
+        url: vaga.url || '',
+        job_id: vaga.job_id || '',
+        origem,
+        observacoes: vaga.observacoes || ''
+      });
+      if (typeof data.banco_total === 'number') bancoTotal = data.banco_total;
+      if (data.duplicada) {
+        itens.push({ ...vaga, estado: 'duplicada', existente: { arquivo: data.arquivo } });
+        continue;
+      }
+      itens.push({ ...vaga, estado: 'nova', arquivo: data.arquivo });
+      // Cadastrada agora: um card repetido na mesma página não pode regravar
+      if (vaga.job_id) existentes.set(String(vaga.job_id), vaga);
+      if (vaga.url) existentes.set(chaveUrl(vaga.url), vaga);
+    } catch (e) {
+      console.error(`Falha ao capturar "${vaga.titulo}":`, e);
+      itens.push({ ...vaga, estado: 'falha', motivo: e.message });
+    }
+  }
+  return { itens, banco_total: bancoTotal };
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   (async () => {
     try {
@@ -204,9 +267,26 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
 
         case 'CAPTURE_VAGA': {
+          const { plataforma, ...vaga } = message.payload;
           const client = await getClient();
-          const data = await client.captureVaga(message.payload);
-          sendResponse({ success: true, data });
+          const lote = await capturarVagas(client, [vaga], plataforma);
+          const [resultado] = lote.itens;
+          sendResponse({
+            success: resultado.estado !== 'falha',
+            error: resultado.estado === 'falha' ? resultado.motivo : undefined,
+            duplicada: resultado.estado === 'duplicada',
+            existente: resultado.existente,
+            arquivo: resultado.arquivo,
+            banco_total: lote.banco_total
+          });
+          break;
+        }
+
+        case 'CAPTURE_VAGAS': {
+          const { vagas, plataforma } = message.payload;
+          const client = await getClient();
+          const lote = await capturarVagas(client, vagas || [], plataforma);
+          sendResponse({ success: true, ...lote });
           break;
         }
 

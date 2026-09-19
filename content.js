@@ -338,6 +338,24 @@ function extractJobPosting() {
     if (descricao) fonte = 'json-ld';
   }
 
+  // LinkedIn: <title> e metas descrevem a busca ("Product Designer jobs in…"),
+  // não a vaga em foco. O extrator dedicado lê o painel da vaga.
+  let jobId = '';
+  const plataforma = isLinkedIn() ? 'linkedin' : '';
+  if (plataforma === 'linkedin') {
+    const vaga = linkedInFocusedJob();
+    if (vaga) {
+      titulo = vaga.titulo || titulo;
+      empresa = vaga.empresa || empresa;
+      local = vaga.local || local;
+      jobId = vaga.job_id;
+      if (vaga.descricao.length > descricao.length) {
+        descricao = vaga.descricao;
+        fonte = 'linkedin';
+      }
+    }
+  }
+
   if (descricao.length < 400) {
     const bloco = bestDescriptionBlock();
     if (bloco.texto.length > descricao.length) {
@@ -363,7 +381,10 @@ function extractJobPosting() {
     titulo,
     empresa,
     local,
-    url: location.href,
+    // URL canônica: é dela que o Hermes tira o id e o nome do arquivo da vaga
+    url: jobId ? linkedInJobUrl(jobId) : location.href,
+    job_id: jobId,
+    plataforma,
     observacoes: (resumo || descricao).slice(0, 300),
     descricao,
     requisitos,
@@ -371,6 +392,185 @@ function extractJobPosting() {
     skills: skills.slice(0, 40),
     fonte
   };
+}
+
+// ─── LinkedIn ───────────────────────────────────────────
+// Três DOMs convivem em produção: a interface nova (2026, classes ofuscadas,
+// ancorada em `componentkey`), a clássica logada e a pública (deslogada).
+// Cada extrator tenta as três, nessa ordem.
+
+const LINKEDIN_HOST = /(^|\.)linkedin\.com$/i;
+
+// Linhas de card que não são localização (data, candidatos, selos)
+const LINKEDIN_LINHA_EXTRA = /^(posted|publicad|há \d|\d+\s*(h|d|w|mo|y|min)\b|.*\bago$|.*applicant|.*candidat|easy apply|candidatura simplificada|promoted|promovid|·|be an early|.*alumni|.*ex-alun|viewed|visualizad|verified|verificad)/i;
+
+function isLinkedIn() {
+  return LINKEDIN_HOST.test(location.hostname);
+}
+
+function linkedInJobUrl(id) {
+  return `https://www.linkedin.com/jobs/view/${id}/`;
+}
+
+/** Id da vaga numa URL do LinkedIn: /jobs/view/<slug>-<id> ou ?currentJobId=<id>. */
+function linkedInIdFromUrl(href) {
+  try {
+    const url = new URL(href, location.href);
+    const match = url.pathname.match(/\/jobs\/view\/(?:[^/?#]*-)?(\d{6,})(?=[/?#]|$)/);
+    if (match) return match[1];
+    return url.searchParams.get('currentJobId') || '';
+  } catch (err) {
+    return '';
+  }
+}
+
+function linkedInLines(el) {
+  const texto = el ? (el.innerText !== undefined ? el.innerText : el.textContent) : '';
+  return String(texto || '').split('\n').map((s) => s.trim()).filter(Boolean);
+}
+
+function linkedInText(sel, root = document) {
+  const el = root.querySelector(sel);
+  return el ? normalizeJobText(el.innerText || el.textContent) : '';
+}
+
+/** "Company, Foundey." → "Foundey" */
+function linkedInCompanyFromAria(label) {
+  return String(label || '').replace(/^(company|empresa),\s*/i, '').replace(/\.$/, '').trim();
+}
+
+/** "Brazil · 3 days ago · Over 100 applicants" → "Brazil" */
+function linkedInFirstSegment(texto) {
+  return String(texto || '').split('·')[0].trim();
+}
+
+/**
+ * Vagas listadas na página (busca, coleções, "vagas recomendadas").
+ * Só o que está renderizado nesta página de resultados — sem paginação.
+ */
+function linkedInListJobs() {
+  const vagas = [];
+  const vistos = new Set();
+  const add = (vaga) => {
+    if (!vaga.job_id || !vaga.titulo || vistos.has(vaga.job_id)) return;
+    vistos.add(vaga.job_id);
+    vagas.push({ ...vaga, url: linkedInJobUrl(vaga.job_id) });
+  };
+
+  // 1) Interface nova: card = div[role=button] com componentkey="job-card-component-ref-<id>"
+  document.querySelectorAll('[componentkey^="job-card-component-ref-"]').forEach((card) => {
+    if (card.getAttribute('role') !== 'button') return;
+    const job_id = card.getAttribute('componentkey').replace('job-card-component-ref-', '');
+    const linhas = linkedInLines(card);
+    const titulo = linhas[0] || '';
+    // O título pode vir duplicado (texto visível + versão para leitor de tela)
+    const idx = linhas[1] === titulo ? 2 : 1;
+    const empresaEl = card.querySelector('[aria-label^="Company, " i], [aria-label^="Empresa, " i]');
+    const empresa = linkedInCompanyFromAria(empresaEl && empresaEl.getAttribute('aria-label')) || linhas[idx] || '';
+    const proxima = linhas[idx + 1] || '';
+    add({ job_id, titulo, empresa, local: LINKEDIN_LINHA_EXTRA.test(proxima) ? '' : proxima });
+  });
+  if (vagas.length) return { vagas, fonte: 'linkedin:nova' };
+
+  // 2) Clássica logada
+  document.querySelectorAll('li[data-occludable-job-id], .job-card-container[data-job-id]').forEach((card) => {
+    const job_id = card.getAttribute('data-occludable-job-id') ||
+      card.getAttribute('data-job-id') ||
+      linkedInIdFromUrl((card.querySelector('a[href*="/jobs/view/"]') || {}).href || '');
+    add({
+      job_id,
+      titulo: linkedInText('.job-card-list__title--link, .job-card-list__title, .artdeco-entity-lockup__title', card).split('\n')[0],
+      empresa: linkedInText('.artdeco-entity-lockup__subtitle, .job-card-container__primary-description, .job-card-container__company-name', card),
+      local: linkedInFirstSegment(linkedInText('.artdeco-entity-lockup__caption, .job-card-container__metadata-item, .job-card-container__metadata-wrapper', card))
+    });
+  });
+  if (vagas.length) return { vagas, fonte: 'linkedin:classica' };
+
+  // 3) Pública (deslogada)
+  document.querySelectorAll('.base-card[data-entity-urn], ul.jobs-search__results-list > li').forEach((card) => {
+    const urnEl = card.hasAttribute('data-entity-urn') ? card : card.querySelector('[data-entity-urn]');
+    const urn = urnEl ? urnEl.getAttribute('data-entity-urn') || '' : '';
+    const job_id = (urn.match(/(\d{6,})$/) || [])[1] ||
+      linkedInIdFromUrl((card.querySelector('a[href*="/jobs/view/"]') || {}).href || '');
+    add({
+      job_id,
+      titulo: linkedInText('.base-search-card__title', card),
+      empresa: linkedInText('.base-search-card__subtitle', card),
+      local: linkedInText('.job-search-card__location', card)
+    });
+  });
+  return { vagas, fonte: vagas.length ? 'linkedin:publica' : '' };
+}
+
+/**
+ * A vaga em foco: a página /jobs/view/<id> ou o painel de detalhe aberto numa
+ * busca (?currentJobId=<id>). Null quando a página não tem vaga em foco.
+ */
+function linkedInFocusedJob() {
+  const job_id = linkedInIdFromUrl(location.href);
+  if (!job_id) return null;
+
+  const foraDeCard = (el) => !el.closest(
+    '[componentkey^="job-card-component-ref-"], li[data-occludable-job-id], .job-card-container, .base-card'
+  );
+  let titulo = '';
+  let empresa = '';
+  let local = '';
+  let descricao = '';
+
+  if (document.querySelector('.job-details-jobs-unified-top-card__job-title, .jobs-unified-top-card__job-title')) {
+    // Clássica logada
+    titulo = linkedInText('.job-details-jobs-unified-top-card__job-title, .jobs-unified-top-card__job-title').split('\n')[0];
+    empresa = linkedInText('.job-details-jobs-unified-top-card__company-name, .jobs-unified-top-card__company-name');
+    local = linkedInFirstSegment(linkedInText(
+      '.job-details-jobs-unified-top-card__primary-description-container, .job-details-jobs-unified-top-card__tertiary-description-container, .jobs-unified-top-card__primary-description'
+    ));
+    descricao = linkedInText('#job-details, .jobs-description__content');
+  } else if (document.querySelector('.top-card-layout__title, .topcard__title')) {
+    // Pública
+    titulo = linkedInText('.top-card-layout__title, .topcard__title');
+    empresa = linkedInText('.topcard__org-name-link, .topcard__flavor a');
+    local = linkedInText('.topcard__flavor--bullet');
+    descricao = linkedInText('.description__text, .show-more-less-html__markup');
+  } else {
+    // Interface nova: empresa em aria-label; título no link canônico da vaga
+    // ou na linha seguinte à empresa no bloco do topo
+    const empresaEl = [...document.querySelectorAll('[aria-label^="Company, " i], [aria-label^="Empresa, " i]')].find(foraDeCard);
+    empresa = linkedInCompanyFromAria(empresaEl && empresaEl.getAttribute('aria-label'));
+    const link = [...document.querySelectorAll('a[href*="/jobs/view/"]')]
+      .find((a) => foraDeCard(a) && linkedInIdFromUrl(a.href) === job_id);
+    titulo = link ? linkedInLines(link)[0] || '' : '';
+
+    let bloco = empresaEl;
+    while (bloco && bloco !== document.body && linkedInLines(bloco).length < 3) bloco = bloco.parentElement;
+    const linhas = bloco && bloco !== document.body && linkedInLines(bloco).length <= 40 ? linkedInLines(bloco) : [];
+    if (!titulo && empresa) titulo = linhas[linhas.indexOf(empresa) + 1] || '';
+    const meta = linhas.find((l) => /\S\s*·\s*\S/.test(l) && !/^(promoted|promovid)/i.test(l));
+    local = meta ? linkedInFirstSegment(meta) : '';
+
+    const h2 = [...document.querySelectorAll('h2')].find((h) => /about the job|sobre a vaga/i.test(h.textContent));
+    if (h2) {
+      let secao = h2.parentElement;
+      while (secao && secao !== document.body && normalizeJobText(secao.innerText).length < 400) secao = secao.parentElement;
+      if (secao && secao !== document.body) descricao = normalizeJobText(secao.innerText);
+    }
+  }
+
+  // <title> "Cargo | Empresa | LinkedIn" cobre o que os seletores não acharam
+  const segmentos = titleSegments(document.title).filter((s) => !/linkedin/i.test(s));
+  if (!titulo && segmentos[0] && !/\bjobs?\b|\bvagas?\b/i.test(segmentos[0])) titulo = segmentos[0];
+  if (!empresa && segmentos[1]) empresa = segmentos[1];
+
+  return { job_id, titulo, empresa, local, descricao, url: linkedInJobUrl(job_id) };
+}
+
+/** Lista de vagas da página, quando a página é uma lista. */
+function extractJobList() {
+  if (isLinkedIn()) {
+    const { vagas, fonte } = linkedInListJobs();
+    return { vagas, fonte, plataforma: 'linkedin', focoJobId: linkedInIdFromUrl(location.href) };
+  }
+  return { vagas: [], fonte: '', plataforma: '', focoJobId: '' };
 }
 
 // Listen for messages
@@ -486,6 +686,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
         case 'EXTRACT_JOB_INFO': {
           sendResponse({ success: true, ...extractJobPosting() });
+          break;
+        }
+
+        case 'EXTRACT_JOB_LIST': {
+          sendResponse({ success: true, ...extractJobList() });
           break;
         }
 

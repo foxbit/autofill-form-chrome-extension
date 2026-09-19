@@ -302,6 +302,32 @@ select option { color: var(--ink); background: var(--surface); }
 .result-title { color: var(--success); font-size: 12px; font-weight: 700; }
 .result-name { color: var(--muted-strong); font-size: 12px; overflow-wrap: anywhere; margin: 3px 0 10px; }
 .result-actions { display: flex; gap: 8px; }
+
+.batch-card .section-header { margin-bottom: 4px; }
+.batch-card .result-name { margin-bottom: 8px; }
+.batch-list { list-style: none; display: grid; gap: 4px; max-height: 280px; overflow-y: auto; margin: 0 0 10px; padding-right: 2px; }
+.batch-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 8px;
+  padding: 7px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--terminal);
+  cursor: pointer;
+}
+.batch-item:hover { border-color: var(--line-strong); }
+.batch-item.is-focus { border-color: rgba(45, 212, 191, .55); }
+.batch-item.is-done { opacity: .75; cursor: default; }
+.batch-item.is-done input { visibility: hidden; }
+.batch-item input { margin: 2px 0 0; accent-color: var(--primary); }
+.batch-item strong { display: block; color: var(--ink); font-size: 12px; font-weight: 650; overflow-wrap: anywhere; }
+.batch-item span { display: block; color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
+.batch-state { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px; white-space: nowrap; padding-top: 2px; }
+.batch-state[data-state="nova"] { color: var(--success); }
+.batch-state[data-state="duplicada"] { color: var(--muted); }
+.batch-state[data-state="falha"] { color: var(--danger); }
 .btn-small { flex: 1; min-height: 40px; }
 
 .activity-terminal { overflow: hidden; border: 1px solid #203750; border-radius: var(--radius); background: var(--terminal); }

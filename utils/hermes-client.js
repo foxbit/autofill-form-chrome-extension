@@ -121,6 +121,15 @@ export class HermesClient {
     return await this._post('/capture', payload);
   }
 
+  /**
+   * Banco de vagas (GET /vagas). Só filtra por status, então a checagem de
+   * duplicata por job_id/url é feita por quem chama.
+   * @returns {Promise<{total:number, vagas:Array}>}
+   */
+  async listVagas() {
+    return await this._get('/vagas');
+  }
+
   /** Gera currículo personalizado em PDF (POST /cv). */
   async generateCv(payload) {
     return await this._post('/cv', this._comModelo(payload));
