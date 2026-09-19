@@ -41,7 +41,7 @@ para autopreencher formulários de candidatura, capturar vagas e gerar currícul
 | `utils/hermes-client.js` | Cliente HTTP para a API (`/health`, `/fill`, `/learn`, `/generate`, `/capture`, `/cv`) | Claude |
 | `utils/dom-parser.js` | Descoberta de campos (labels, aria, placeholders, heurísticas) | Claude |
 | `utils/form-filler.js` | Preenchimento com simulação de digitação (SPAs) | Claude |
-| `utils/storage-manager.js` | Chrome storage (apiUrl, idioma) | Claude |
+| `utils/storage-manager.js` | Chrome storage (apiUrl, idioma, aiModel) | Claude |
 | `styles/content.css` | Estilos injetados (highlight, modais, toast, botões) | Claude |
 | `CLAUDE.md` | Contexto do projeto (este arquivo) | Hermes |
 
@@ -72,11 +72,26 @@ para autopreencher formulários de candidatura, capturar vagas e gerar currícul
   segue funcionando. O painel só grava no storage — cada aba reage sozinha via
   `chrome.storage.onChanged`, sem mensagem por aba.
 
+### Mensagens para a aba
+- **Frame principal**: `EXTRACT_JOB_INFO` e `EXTRACT_JOB_LIST` vão com `frameId: 0`. Sem isso a
+  mensagem chega a todos os iframes (o content script roda em `all_frames`) e a primeira
+  resposta vence — no LinkedIn um iframe `/preload/` "identificava" a vaga com dados vazios.
+  Só a varredura de formulário percorre os frames, e faz isso um a um (`scanFormInAllFrames`).
+
+### Log de auditoria
+- `chrome.storage.local.auditLog` (últimas 300 entradas): página (`origem: pagina`, com
+  `frame` e `url`), background e painel escrevem com `auditLog(evento, dados)`; cada
+  contexto enfileira as próprias gravações. O painel copia tudo em "Copiar log" (terminal
+  de atividade). Eventos: `extract_job_info`, `extract_job_list`, `capture_vaga`,
+  `capture_vagas`, `atividade` (linhas do painel), `erro_pagina`, `erro_background`.
+
 ### Formulários (Plataformas)
 - **Gupy/Workday/GreenHouse** — heurísticas especiais no `dom-parser.js`
 - **Comboboxes** — **preencher** (digita, espera o listbox, clica na opção). Campos como País/Cidade são obrigatórios. O `dom-parser` ainda detecta combobox e os inclui no parse.
 - **SPAs (React/Vue)** — usar o **setter nativo do prototype** (`setNativeValue` no form-filler), NÃO digitação caractere-a-caractere. React instala um value tracker no node: atribuir `el.value` direto atualiza o tracker, mas o `input` event subsequente é descartado como "sem mudança" — o submit vai vazio. Setter nativo via `Object.getOwnPropertyDescriptor(proto, 'value')` preenche corretamente.
-- **Campos já preenchidos** — nunca sobrescrever o que o candidato já respondeu (text, textarea, combobox)
+- **Campos já preenchidos** — nunca sobrescrever o que o candidato já respondeu (text, textarea, combobox).
+  Única exceção: a resposta aprovada no modal ⚡, que é pedida para aquele campo — usa
+  `formFiller.fill(field, valor, { overwrite: true })` e o modal avisa que vai substituir.
 - **Select/radio/checkbox** — casar opção por similaridade (`match_option`: exato → contenção → overlap de tokens), verificar o valor após preencher.
 
 ## API Endpoints (porta 8790)
@@ -86,15 +101,26 @@ para autopreencher formulários de candidatura, capturar vagas e gerar currícul
 | GET | `/health` | Health check |
 | GET | `/profile` | Perfil canônico do cofre |
 | POST | `/fill` | Preenche campos (SINCRONO; recebe `fields[]` com `type`, `options[]`, `required`, `multiple`, `standalone`, `accept`; retorna `filled[]` + `unmatched[]`, campos sensíveis voltam como `sensivel`) |
-| POST | `/fill-match` | Escolha de opção por IA (`fields[]`, `contexto`; valida via `match_option`, IA não inventa alternativa fora da lista) |
+| POST | `/fill-match` | Escolha de opção por IA (`fields[]`, `contexto`, `modelo?`; valida via `match_option`, IA não inventa alternativa fora da lista) |
 | GET | `/arquivos` | Lista documentos fixos (cv pt/en + cover-letter pt/en) |
 | GET | `/arquivos/{tipo}` | Serve PDF (`tipo` = cv | cover-letter, `idioma` = pt | en) |
 | POST | `/learn` | Salva resposta aprendida (`pergunta`, `resposta`, `idioma`) |
 | GET | `/qa` | Busca resposta (`q=`, `limit=`) |
-| POST | `/generate` | Gera resposta via IA (`pergunta`, `contexto`, `instrucao`, `idioma`) |
-| POST | `/capture` | Registra vaga no banco |
-| POST | `/cv` | Gera currículo PDF personalizado |
+| POST | `/generate` | Gera resposta via IA (`pergunta`, `contexto`, `instrucao`, `idioma`, `modelo?`) |
+| GET | `/modelos` | Catálogo de modelos de IA: `modelos[]` (ids crus, ex. `glm-5.3`), `padrao`, `ativo`, `efetivo`, `fonte` |
+| POST/DELETE | `/modelos/ativo` | Modelo ativo no servidor (`modelo`); o painel grava ao salvar. Vale também para cron/CLI |
+| POST | `/capture` | Registra vaga no banco (`titulo`, `empresa`, `local`, `url`, `origem[]`). Devolve `{ok, duplicada, arquivo, banco_total}`: se a vaga já existe, `duplicada: true` e nada é regravado (lock compartilhado com o cron). `job_id` e `observacoes` são aceitos mas ignorados: o id sai da `url` (`/jobs/view/{id}/`); fora do LinkedIn, mandar a URL com query (o servidor tira fragmento e `utm_*`/`gclid` e ordena os parâmetros) |
+| GET | `/vagas` | Banco de vagas: `{total, vagas[]}` com `job_id`, `url`, `status`, `origem`, `arquivo`. Filtros: `status`, `job_id`, `url` |
+| POST | `/cv` | Gera currículo PDF personalizado (usa IA; `modelo?`) |
 | GET | `/cvs/{filename}` | Download de CV gerado |
+
+### Modelo de IA
+- Rotas que chamam o LLM: `/generate`, `/fill-match` e `/cv`. As demais (`/fill`, `/capture`, `/learn`, `/qa`…) não usam IA.
+- `modelo` é opcional (string|null). Vazio = modelo `efetivo` do servidor. Id fora do catálogo = **422**
+  (`modelo desconhecido: X`). Com o catálogo indisponível (`modelos: []`) a validação fica permissiva.
+- Precedência no servidor: `modelo` do corpo > ativo no servidor > `OPENCODE_MODEL` > fallback do código.
+- O catálogo pode listar modelos que o provedor recusa (502 `Model is unavailable`). Modelos de raciocínio
+  podem devolver vazio no `/fill-match` (`max_tokens` baixo) e o campo cai em `unmatched`.
 
 ## Fluxos Principais
 
@@ -107,9 +133,15 @@ popup → AUTOFILL_FORM (content) → form-filler.fill() sequencial
 
 ### Gerar Resposta IA (por campo)
 ```
-Botão ⚡ → modal com instrução opcional → GENERATE_ANSWER (background)
-→ API /generate → resposta → modal de aprovação → form-filler.fill()
+Botão ⚡ → modal (reabre com a última resposta salva, se houver)
+→ Gerar / Gerar novamente → GENERATE_ANSWER (background) → API /generate
+→ resposta (editável) → Aprovar e preencher → form-filler.fill(..., { overwrite: true })
 ```
+- A última resposta de cada pergunta fica em `chrome.storage.local`, chave
+  `generatedAnswer::<origin><pathname>::<pergunta normalizada>` (resposta, instrução,
+  data). Edições feitas no modal também são guardadas ao fechar. Limite de 200 entradas.
+- Antes de preencher, o campo é reencontrado pela pergunta se o site recriou o nó
+  enquanto o modal estava aberto. Falha no preenchimento mostra o motivo e mantém o modal aberto.
 
 ### Aprender (salvar correção)
 ```
@@ -118,11 +150,38 @@ Botão ☁️ → CHECK_QUESTION → se existe: modal sobrescrever
 → SAVE_SINGLE_ANSWER → API /learn
 ```
 
+### Modelo de IA (painel)
+```
+loadModels → GET_MODELS (background) → GET /modelos → seletor
+Salvar → chrome.storage.local.aiModel  (extensão)
+       → SET_ACTIVE_MODEL → POST /modelos/ativo (servidor; vazio = DELETE)
+getClient() lê aiModel a cada mensagem → HermesClient._comModelo() acrescenta
+`modelo` em /generate, /fill-match e /cv
+```
+- Salvar grava nos dois lugares: no storage (o que a extensão envia) e no servidor
+  (o que a automação sem request usa). Se o servidor recusar, a extensão mantém a
+  escolha local e o painel avisa que o servidor ficou de fora.
+
 ### Capturar Vaga
 ```
-EXTRACT_JOB_INFO (content) → metadados da página
-→ CAPTURE_VAGA (background) → API /capture → banco
+popup → EXTRACT_JOB_INFO + EXTRACT_JOB_LIST (content)
+  lista com 2+ vagas → painel mostra as vagas com checkbox → CAPTURE_VAGAS
+  senão            → CAPTURE_VAGA
+background → GET /vagas (dedup por job_id ou url) → POST /capture só nas novas
 ```
+- **Nunca regravar**: duas barreiras. O background lê `/vagas` antes de cada envio e pula o
+  que já existe (simples e lote); se `/vagas` falhar, a captura é abortada. E o servidor
+  devolve `duplicada: true` sem regravar quando a vaga já existe (cobre a corrida com o cron).
+- **Origem**: `["extensao", "linkedin"]` no LinkedIn, `["extensao"]` no resto
+  (`linkedin-jobs-search` é a coleta do cron).
+- **LinkedIn** (`content.js`, seção LinkedIn): três DOMs convivem — interface nova (2026,
+  classes ofuscadas; card = `div[role=button][componentkey="job-card-component-ref-<id>"]`,
+  empresa em `aria-label="Company, X."`, título/empresa também no `<title>` "Cargo | Empresa | LinkedIn"),
+  clássica logada (`li[data-occludable-job-id]`, `.job-details-jobs-unified-top-card__*`) e
+  pública (`.base-card[data-entity-urn]`, `.topcard__*`). A vaga em foco vem de `/jobs/view/<id>`
+  ou `?currentJobId=<id>`; a URL enviada é sempre a canônica `https://www.linkedin.com/jobs/view/<id>/`.
+  A lista cobre só a página de resultados atual (25 cards), sem paginação.
+  Na interface nova a descrição ("About the job") carrega de forma preguiçosa e pode vir vazia.
 
 ### Gerar CV
 ```

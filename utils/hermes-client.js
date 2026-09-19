@@ -4,8 +4,15 @@
  * passam a ser servidos pela API do Hermes (FastAPI no servidor interno).
  */
 export class HermesClient {
-  constructor(apiUrl) {
+  constructor(apiUrl, modelo = '') {
     this.apiUrl = (apiUrl || 'http://127.0.0.1:8790').replace(/\/$/, '');
+    // Id do modelo escolhido no painel (ex.: "glm-5.3"); vazio = padrão do servidor
+    this.modelo = modelo;
+  }
+
+  /** Acrescenta o modelo escolhido ao body das rotas que chamam a IA. */
+  _comModelo(body) {
+    return this.modelo ? { ...body, modelo: this.modelo } : body;
   }
 
   async _get(path) {
@@ -30,11 +37,41 @@ export class HermesClient {
     return await res.json();
   }
 
+  async _delete(path) {
+    const res = await fetch(`${this.apiUrl}${path}`, { method: 'DELETE' });
+    if (!res.ok) {
+      const txt = await res.text();
+      throw new Error(`Hermes API ${res.status}: ${txt.slice(0, 200)}`);
+    }
+    return await res.json();
+  }
+
   /** Testa a conexão com a API (GET /health). */
   async testConnection() {
     const d = await this._get('/health');
     if (!d || !d.ok) throw new Error('Resposta inesperada de /health');
     return true;
+  }
+
+  /**
+   * Modelos que o servidor aceita (GET /modelos).
+   * @returns {Promise<{modelos:string[], padrao:string, ativo:?string, efetivo:string, fonte:string}>}
+   */
+  async listModels() {
+    return await this._get('/modelos');
+  }
+
+  /**
+   * Grava no servidor o modelo escolhido (POST /modelos/ativo). Alcança também
+   * o que chama a IA sem request — cron do LinkedIn, cvgen por CLI.
+   */
+  async setActiveModel(modelo) {
+    return await this._post('/modelos/ativo', { modelo });
+  }
+
+  /** Limpa o modelo ativo do servidor, voltando ao padrão dele (DELETE). */
+  async clearActiveModel() {
+    return await this._delete('/modelos/ativo');
   }
 
   /** Perfil canônico do cofre (GET /profile). */
@@ -59,7 +96,7 @@ export class HermesClient {
    * @param {string} contexto - descrição da vaga
    */
   async fillMatch(fields, contexto = '') {
-    return await this._post('/fill-match', { fields, contexto });
+    return await this._post('/fill-match', this._comModelo({ fields, contexto }));
   }
 
   /** Grava/atualiza uma resposta aprendida (POST /learn). */
@@ -76,7 +113,7 @@ export class HermesClient {
 
   /** Gera resposta para uma pergunta aberta via IA (POST /generate). */
   async generateAnswer(pergunta, contexto = '', instrucao = '', idioma = 'pt') {
-    return await this._post('/generate', { pergunta, contexto, instrucao, idioma });
+    return await this._post('/generate', this._comModelo({ pergunta, contexto, instrucao, idioma }));
   }
 
   /** Registra uma vaga capturada manualmente (POST /capture). */
@@ -84,9 +121,18 @@ export class HermesClient {
     return await this._post('/capture', payload);
   }
 
+  /**
+   * Banco de vagas (GET /vagas). Só filtra por status, então a checagem de
+   * duplicata por job_id/url é feita por quem chama.
+   * @returns {Promise<{total:number, vagas:Array}>}
+   */
+  async listVagas() {
+    return await this._get('/vagas');
+  }
+
   /** Gera currículo personalizado em PDF (POST /cv). */
   async generateCv(payload) {
-    return await this._post('/cv', payload);
+    return await this._post('/cv', this._comModelo(payload));
   }
 
   /**

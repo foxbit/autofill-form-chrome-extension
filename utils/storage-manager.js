@@ -1,9 +1,10 @@
 /**
- * Configuração local da extensão — agora só a URL da API do Hermes e o idioma.
+ * Configuração local da extensão — URL da API do Hermes, idioma e o modelo de
+ * IA escolhido no painel (vazio = padrão do servidor).
  */
 export const storageManager = {
   async getKeys() {
-    return await chrome.storage.local.get(['apiUrl', 'targetLanguage']);
+    return await chrome.storage.local.get(['apiUrl', 'targetLanguage', 'aiModel']);
   },
 
   async setKeys(keys) {

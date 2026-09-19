@@ -15,7 +15,13 @@ const activityLogEl = document.getElementById('activityLog');
 const togglePageUiEl = document.getElementById('togglePageUi');
 const togglePageUiHintEl = document.getElementById('togglePageUiHint');
 const terminalStateEl = document.getElementById('terminalState');
+const aiModelSelect = document.getElementById('aiModel');
+const btnSaveModel = document.getElementById('btnSaveModel');
+const modelHintEl = document.getElementById('modelHint');
 let lastCv = null;
+// Modelo gravado no storage (vazio = padrão do servidor) e o padrão que o servidor informa
+let savedModel = '';
+let serverDefaultModel = '';
 
 /**
  * Paginação do PDF do currículo — enviada ao Hermes em POST /cv.
@@ -50,8 +56,31 @@ function setTerminalState(state = 'idle') {
   terminalStateEl.textContent = labels[state] || labels.idle;
 }
 
+// Log de auditoria compartilhado com página e background (chrome.storage.local.auditLog)
+const AUDIT_LOG_MAX = 300;
+let auditQueue = Promise.resolve();
+
+function auditLog(evento, dados = {}) {
+  auditQueue = auditQueue.then(async () => {
+    try {
+      const { auditLog: atual = [] } = await chrome.storage.local.get('auditLog');
+      atual.push({ ts: new Date().toISOString(), origem: 'painel', evento, dados });
+      await chrome.storage.local.set({ auditLog: atual.slice(-AUDIT_LOG_MAX) });
+    } catch (err) {
+      console.warn('[Painel] auditoria indisponível:', err);
+    }
+  });
+  return auditQueue;
+}
+
+function formatAuditEntry(entrada) {
+  const onde = [entrada.origem, entrada.frame].filter(Boolean).join('/');
+  return `${entrada.ts} [${onde}] ${entrada.evento}${entrada.url ? ` ${entrada.url}` : ''} ${JSON.stringify(entrada.dados || {})}`;
+}
+
 function addActivity(message, tone = 'info') {
   if (!message) return;
+  auditLog('atividade', { tone, message: String(message) });
 
   const entry = document.createElement('div');
   entry.className = 'terminal-entry';
@@ -241,9 +270,12 @@ async function ensureContentScript(tabId) {
 
 async function extractJobInfo(tabId) {
   await ensureContentScript(tabId);
-  const res = await sendToTab(tabId, { type: 'EXTRACT_JOB_INFO' });
+  // Só o frame principal: sem frameId a mensagem vai a todos os iframes da
+  // aba e a primeira resposta vence — um iframe de anúncio "identificava" a vaga.
+  const res = await sendToTab(tabId, { type: 'EXTRACT_JOB_INFO' }, 0);
   if (res && res.success) return res;
   const tab = await chrome.tabs.get(tabId);
+  addActivity(`Página sem resposta do script (${(res && res.error) || 'sem detalhe'}); usando o título da aba.`, 'error');
   return {
     success: true, titulo: tab.title, empresa: '', local: '', url: tab.url,
     observacoes: '', descricao: '', requisitos: '', pagina: '', skills: [],
@@ -271,8 +303,9 @@ function buildVagaTexto(info) {
 
 // ─── configurações ──────────────────────────────────────
 async function loadConfig() {
-  const { apiUrl, pageUiEnabled } = await chrome.storage.local.get(['apiUrl', 'pageUiEnabled']);
+  const { apiUrl, pageUiEnabled, aiModel } = await chrome.storage.local.get(['apiUrl', 'pageUiEnabled', 'aiModel']);
   apiUrlInput.value = apiUrl || 'http://127.0.0.1:8790';
+  savedModel = aiModel || '';
   setPageUiLabel(pageUiEnabled !== false);
 }
 
@@ -300,6 +333,118 @@ apiUrlInput.addEventListener('change', async () => {
   await chrome.storage.local.set({ apiUrl: apiUrlInput.value.trim() });
   setConnectionState('idle', 'API não testada');
   addActivity('Endereço do servidor Hermes atualizado.', 'info');
+  loadModels();
+});
+
+// ─── modelo de IA ───────────────────────────────────────
+function setModelHint(message, tone = 'info') {
+  modelHintEl.textContent = message;
+  modelHintEl.dataset.tone = tone;
+}
+
+function modelInUseText() {
+  if (savedModel) return `Em uso: ${savedModel}.`;
+  return serverDefaultModel
+    ? `Em uso: padrão do servidor (${serverDefaultModel}).`
+    : 'Em uso: padrão do servidor.';
+}
+
+function syncSaveModelButton() {
+  btnSaveModel.disabled = aiModelSelect.disabled || aiModelSelect.value === savedModel;
+}
+
+/** Preenche o seletor com os modelos que o servidor aceita (GET /modelos). */
+async function loadModels() {
+  aiModelSelect.disabled = true;
+  syncSaveModelButton();
+  setModelHint('Carregando modelos…');
+
+  const res = await sendToBackground({
+    type: 'GET_MODELS',
+    payload: { apiUrl: apiUrlInput.value.trim() }
+  });
+  const modelos = res && res.success ? res.modelos : [];
+  serverDefaultModel = res && res.success ? res.efetivo : '';
+
+  const opcoes = [['', serverDefaultModel
+    ? `Padrão do servidor (${serverDefaultModel})`
+    : 'Padrão do servidor']];
+  modelos.forEach((modelo) => opcoes.push([modelo, modelo]));
+  // O modelo salvo continua visível mesmo se o servidor deixou de oferecê-lo
+  const savedMissing = savedModel && !modelos.includes(savedModel);
+  if (savedMissing) {
+    opcoes.push([savedModel, modelos.length ? `${savedModel} (indisponível)` : savedModel]);
+  }
+
+  aiModelSelect.replaceChildren(...opcoes.map(([value, label]) => {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = label;
+    return option;
+  }));
+  aiModelSelect.value = savedModel;
+  aiModelSelect.disabled = !modelos.length && !savedModel;
+  syncSaveModelButton();
+
+  if (!res || !res.success) {
+    const error = (res && res.error) || 'sem resposta do servidor';
+    console.error('[Painel] Falha ao carregar modelos:', error);
+    setModelHint(/\b404\b/.test(error)
+      ? 'Este servidor ainda não lista modelos (GET /modelos). A IA usa o padrão dele.'
+      : `Não foi possível carregar os modelos: ${error}`, 'error');
+  } else if (!modelos.length) {
+    // Provedor fora do ar e sem cache: o servidor segue com o padrão dele
+    setModelHint(savedModel
+      ? `Catálogo de modelos indisponível agora. O modelo salvo (${savedModel}) continua sendo enviado.`
+      : 'Catálogo de modelos indisponível agora. A IA usa o padrão do servidor.', 'error');
+  } else if (savedMissing) {
+    setModelHint(`O modelo salvo (${savedModel}) não está mais no catálogo; a IA vai recusar. Escolha outro.`, 'error');
+  } else {
+    setModelHint(modelInUseText());
+  }
+}
+
+aiModelSelect.addEventListener('change', () => {
+  syncSaveModelButton();
+  if (aiModelSelect.value === savedModel) setModelHint(modelInUseText());
+  else setModelHint('Clique em Salvar para passar a usar este modelo.');
+});
+
+btnSaveModel.addEventListener('click', async () => {
+  const modelo = aiModelSelect.value;
+  btnSaveModel.disabled = true;
+  try {
+    await chrome.storage.local.set({ aiModel: modelo });
+  } catch (err) {
+    console.error('[Painel] Falha ao salvar modelo:', err);
+    setModelHint(`Não foi possível salvar: ${err.message}`, 'error');
+    syncSaveModelButton();
+    return;
+  }
+  savedModel = modelo;
+  syncSaveModelButton();
+
+  // Grava a escolha no servidor também: é o que alcança a automação sem
+  // request (cron do LinkedIn, cvgen por CLI). Vazio = limpa e volta ao padrão.
+  setModelHint('Salvando no servidor…');
+  const res = await sendToBackground({ type: 'SET_ACTIVE_MODEL', payload: { modelo } });
+  await loadModels();
+
+  if (!res || !res.success) {
+    const error = (res && res.error) || 'sem resposta do servidor';
+    console.error('[Painel] Falha ao gravar o modelo no servidor:', error);
+    setModelHint(`Salvo na extensão, mas não no servidor: ${error}`, 'error');
+    addActivity(`Modelo salvo só na extensão — o servidor não aceitou: ${error}`, 'error');
+    return;
+  }
+
+  setModelHint(modelInUseText(), 'success');
+  addActivity(
+    modelo
+      ? `Modelo de IA salvo: ${modelo}. Vale para a extensão e para as rotinas do servidor.`
+      : 'Modelo de IA: voltou para o padrão do servidor, aqui e no servidor.',
+    'success'
+  );
 });
 
 // ─── ações ──────────────────────────────────────────────
@@ -406,13 +551,20 @@ document.getElementById('btnAutofill').addEventListener('click', (event) => runA
   );
 }));
 
-document.getElementById('btnCapture').addEventListener('click', (event) => runAction(event.currentTarget, async () => {
-  const tab = await refreshPageTarget();
-  if (!tab) return setStatus('Nenhuma aba ativa foi encontrada.', 'error');
+// ─── captura de vagas ───────────────────────────────────
+const batchCardEl = document.getElementById('batchCard');
+const batchListEl = document.getElementById('batchList');
+const batchHintEl = document.getElementById('batchHint');
+const btnBatchCapture = document.getElementById('btnBatchCapture');
+const btnBatchToggle = document.getElementById('btnBatchToggle');
+let batchState = null;   // { vagas, plataforma } da lista mostrada no painel
 
-  setStatus('Lendo os dados da vaga na página em foco…', 'info');
-  const info = await extractJobInfo(tab.id);
-  addActivity(`Vaga identificada: ${info.titulo || 'sem título informado'}.`, 'info');
+function rotuloVaga(vaga) {
+  return [vaga.empresa, vaga.local].filter(Boolean).join(' · ');
+}
+
+/** Uma vaga só. O background pula a que já está no banco, sem regravar. */
+async function captureSingle(info) {
   setStatus('Registrando a vaga no banco…', 'info');
   const res = await sendToBackground({
     type: 'CAPTURE_VAGA',
@@ -421,15 +573,164 @@ document.getElementById('btnCapture').addEventListener('click', (event) => runAc
       empresa: info.empresa,
       local: info.local,
       url: info.url,
+      job_id: info.job_id || '',
+      plataforma: info.plataforma || '',
       observacoes: info.observacoes
     }
   });
-  if (res && res.success) {
-    setStatus(`Vaga registrada no banco. Total atual: ${res.data.banco_total}.`, 'success');
-  } else {
+  if (!res || !res.success) {
     setStatus((res && res.error) || 'Não foi possível registrar esta vaga.', 'error');
+    return;
   }
+  if (res.duplicada) {
+    const status = res.existente && res.existente.status;
+    setStatus(`Esta vaga já está na sua lista${status ? ` (status: ${status})` : ''}. Nada foi alterado.`, 'info');
+    return;
+  }
+  setStatus(`Vaga registrada no banco. Total atual: ${res.banco_total}.`, 'success');
+}
+
+function selectedBatch() {
+  if (!batchState) return [];
+  return [...batchListEl.querySelectorAll('input[type="checkbox"]:not(:disabled)')]
+    .filter((cb) => cb.checked)
+    .map((cb) => batchState.vagas[Number(cb.dataset.index)]);
+}
+
+function syncBatchButtons() {
+  const n = selectedBatch().length;
+  btnBatchCapture.disabled = n === 0;
+  btnBatchCapture.querySelector('.button-label').textContent =
+    n ? `Cadastrar ${n} selecionada${n > 1 ? 's' : ''}` : 'Cadastrar selecionadas';
+  const abertas = [...batchListEl.querySelectorAll('input[type="checkbox"]:not(:disabled)')];
+  btnBatchToggle.hidden = abertas.length === 0;
+  btnBatchToggle.textContent = abertas.some((cb) => !cb.checked) ? 'Marcar todas' : 'Desmarcar todas';
+}
+
+function renderBatch(lista) {
+  batchState = { vagas: lista.vagas, plataforma: lista.plataforma };
+  batchListEl.replaceChildren(...lista.vagas.map((vaga, index) => {
+    const li = document.createElement('li');
+    const label = document.createElement('label');
+    label.className = 'batch-item';
+    if (lista.focoJobId && vaga.job_id === lista.focoJobId) label.classList.add('is-focus');
+    label.title = vaga.url;
+
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = true;
+    cb.dataset.index = index;
+
+    const copy = document.createElement('div');
+    const strong = document.createElement('strong');
+    strong.textContent = vaga.titulo;
+    const span = document.createElement('span');
+    span.textContent = rotuloVaga(vaga) || vaga.url;
+    copy.append(strong, span);
+
+    const state = document.createElement('span');
+    state.className = 'batch-state';
+
+    label.append(cb, copy, state);
+    li.appendChild(label);
+    return li;
+  }));
+  batchHintEl.textContent = `${lista.vagas.length} vagas nesta página. O que já estiver na sua lista é pulado, sem alterar nada.`;
+  batchCardEl.hidden = false;
+  syncBatchButtons();
+}
+
+function closeBatch() {
+  batchCardEl.hidden = true;
+  batchListEl.replaceChildren();
+  batchState = null;
+}
+
+document.getElementById('btnCapture').addEventListener('click', (event) => runAction(event.currentTarget, async () => {
+  const tab = await refreshPageTarget();
+  if (!tab) return setStatus('Nenhuma aba ativa foi encontrada.', 'error');
+  closeBatch();
+
+  setStatus('Lendo a página em foco…', 'info');
+  const info = await extractJobInfo(tab.id);
+  const lista = await sendToTab(tab.id, { type: 'EXTRACT_JOB_LIST' }, 0);
+  const vagas = lista && lista.success ? lista.vagas : [];
+  addActivity(
+    `Leitura: ${info.titulo || '(sem título)'}${info.empresa ? ` — ${info.empresa}` : ''}` +
+      ` · id ${info.job_id || '—'} · fonte ${info.fonte || '—'} · lista ${vagas.length}`,
+    'info'
+  );
+
+  // Página de busca: a pessoa escolhe o que entra, em vez de cadastrar às cegas.
+  // Numa página de vaga com "vagas semelhantes" a vaga em foco não está na
+  // lista — aí vale a vaga da página, não a lista.
+  const focoNaLista = !info.job_id || vagas.some((v) => v.job_id === info.job_id);
+  if (vagas.length >= 2 && focoNaLista) {
+    addActivity(`Lista com ${vagas.length} vagas encontrada (${lista.fonte}).`, 'info');
+    renderBatch(lista);
+    setStatus('Marque abaixo as vagas que entram na sua lista.', 'info');
+    return;
+  }
+
+  if (!info.titulo) return setStatus('Não identifiquei uma vaga nesta página.', 'error');
+  addActivity(`Vaga identificada: ${info.titulo}${info.empresa ? ` — ${info.empresa}` : ''}.`, 'info');
+  await captureSingle(info);
 }));
+
+batchListEl.addEventListener('change', syncBatchButtons);
+document.getElementById('btnBatchClose').addEventListener('click', closeBatch);
+
+btnBatchToggle.addEventListener('click', () => {
+  const abertas = [...batchListEl.querySelectorAll('input[type="checkbox"]:not(:disabled)')];
+  const marcar = abertas.some((cb) => !cb.checked);
+  abertas.forEach((cb) => { cb.checked = marcar; });
+  syncBatchButtons();
+});
+
+btnBatchCapture.addEventListener('click', async (event) => {
+  const selecionadas = selectedBatch();
+  if (!selecionadas.length || !batchState) return;
+  btnBatchCapture.disabled = true;
+  await runAction(event.currentTarget, async () => {
+    setStatus(`Cadastrando ${selecionadas.length} vaga${selecionadas.length > 1 ? 's' : ''}…`, 'info');
+    const res = await sendToBackground({
+      type: 'CAPTURE_VAGAS',
+      payload: { vagas: selecionadas, plataforma: batchState.plataforma }
+    });
+    if (!res || !res.success) {
+      setStatus((res && res.error) || 'Não foi possível cadastrar as vagas.', 'error');
+      return;
+    }
+
+    const porChave = new Map(res.itens.map((item) => [item.job_id || item.url, item]));
+    batchListEl.querySelectorAll('.batch-item').forEach((label) => {
+      const cb = label.querySelector('input');
+      const vaga = batchState.vagas[Number(cb.dataset.index)];
+      const item = porChave.get(vaga.job_id || vaga.url);
+      if (!item) return;
+      label.classList.add('is-done');
+      cb.checked = false;
+      cb.disabled = true;
+      const state = label.querySelector('.batch-state');
+      state.dataset.state = item.estado;
+      if (item.estado === 'nova') state.textContent = 'cadastrada';
+      else if (item.estado === 'duplicada') state.textContent = item.existente && item.existente.status ? `já na lista · ${item.existente.status}` : 'já na lista';
+      else { state.textContent = 'falhou'; state.title = item.motivo || ''; }
+      if (item.estado === 'falha') addActivity(`Falhou "${vaga.titulo}": ${item.motivo}`, 'error');
+    });
+
+    const contagem = (estado) => res.itens.filter((item) => item.estado === estado).length;
+    const novas = contagem('nova');
+    const duplicadas = contagem('duplicada');
+    const falhas = contagem('falha');
+    setStatus(
+      `${novas} cadastrada${novas === 1 ? '' : 's'}, ${duplicadas} já na lista${falhas ? `, ${falhas} com falha` : ''}.` +
+        (typeof res.banco_total === 'number' ? ` Total no banco: ${res.banco_total}.` : ''),
+      falhas ? 'error' : 'success'
+    );
+  });
+  syncBatchButtons();
+});
 
 document.getElementById('btnCv').addEventListener('click', (event) => runAction(event.currentTarget, async () => {
   const tab = await refreshPageTarget();
@@ -500,6 +801,28 @@ document.getElementById('btnDownloadCv').addEventListener('click', async () => {
   }
 });
 
+document.getElementById('btnCopyLog').addEventListener('click', async () => {
+  const { auditLog: entradas = [] } = await chrome.storage.local.get('auditLog');
+  if (!entradas.length) return addActivity('Log de auditoria vazio.', 'info');
+  const texto = entradas.map(formatAuditEntry).join('\n');
+  try {
+    await navigator.clipboard.writeText(texto);
+    addActivity(`Log copiado: ${entradas.length} entradas (página, painel e servidor).`, 'success');
+  } catch (err) {
+    // Sem foco no painel a área de transferência recusa; o arquivo sempre funciona
+    console.warn('[Painel] Área de transferência indisponível, salvando arquivo:', err);
+    try {
+      const url = URL.createObjectURL(new Blob([texto], { type: 'text/plain' }));
+      const filename = `autofill-auditoria-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.log`;
+      await chrome.downloads.download({ url, filename, saveAs: true });
+      addActivity(`Log salvo em arquivo: ${filename} (${entradas.length} entradas).`, 'success');
+    } catch (err2) {
+      console.error('[Painel] Falha ao exportar o log:', err2);
+      addActivity(`Não foi possível exportar o log: ${err2.message}`, 'error');
+    }
+  }
+});
+
 document.getElementById('btnClearActivity').addEventListener('click', () => {
   activityLogEl.replaceChildren();
   setTerminalState('idle');
@@ -515,6 +838,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
 
 async function initialize() {
   await loadConfig();
+  loadModels();
   await refreshPageTarget();
   addActivity('Painel pronto. Escolha uma ação para iniciar.', 'info');
 }

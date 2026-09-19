@@ -338,6 +338,26 @@ function extractJobPosting() {
     if (descricao) fonte = 'json-ld';
   }
 
+  // LinkedIn: <title> e metas descrevem a busca ("Product Designer jobs in…"),
+  // não a vaga em foco. O extrator dedicado lê o painel da vaga.
+  let jobId = '';
+  let variante = '';
+  const plataforma = isLinkedIn() ? 'linkedin' : '';
+  if (plataforma === 'linkedin') {
+    const vaga = linkedInFocusedJob();
+    if (vaga) {
+      titulo = vaga.titulo || titulo;
+      empresa = vaga.empresa || empresa;
+      local = vaga.local || local;
+      jobId = vaga.job_id;
+      variante = vaga.variante;
+      if (vaga.descricao.length > descricao.length) {
+        descricao = vaga.descricao;
+        fonte = 'linkedin';
+      }
+    }
+  }
+
   if (descricao.length < 400) {
     const bloco = bestDescriptionBlock();
     if (bloco.texto.length > descricao.length) {
@@ -363,7 +383,11 @@ function extractJobPosting() {
     titulo,
     empresa,
     local,
-    url: location.href,
+    // URL canônica: é dela que o Hermes tira o id e o nome do arquivo da vaga
+    url: jobId ? linkedInJobUrl(jobId) : location.href,
+    job_id: jobId,
+    plataforma,
+    variante,
     observacoes: (resumo || descricao).slice(0, 300),
     descricao,
     requisitos,
@@ -371,6 +395,224 @@ function extractJobPosting() {
     skills: skills.slice(0, 40),
     fonte
   };
+}
+
+// ─── log de auditoria ───────────────────────────────────
+// Registro leve em chrome.storage.local (`auditLog`, últimas entradas) para
+// diagnosticar captura e preenchimento sem DevTools: página, background e
+// painel escrevem na mesma lista; o painel copia tudo com "Copiar log".
+const AUDIT_LOG_MAX = 300;
+let auditQueue = Promise.resolve();
+
+function auditLog(evento, dados = {}) {
+  console.debug('[Autofill IA]', evento, dados);
+  const entrada = {
+    ts: new Date().toISOString(),
+    origem: 'pagina',
+    frame: window === window.top ? 'top' : 'iframe',
+    url: location.href.slice(0, 300),
+    evento,
+    dados
+  };
+  // Fila local: leituras e gravações em sequência para não perder entradas
+  auditQueue = auditQueue.then(async () => {
+    try {
+      const { auditLog: atual = [] } = await chrome.storage.local.get('auditLog');
+      atual.push(entrada);
+      await chrome.storage.local.set({ auditLog: atual.slice(-AUDIT_LOG_MAX) });
+    } catch (err) {
+      /* storage indisponível (página descarregada): fica só no console */
+    }
+  });
+  return auditQueue;
+}
+
+// ─── LinkedIn ───────────────────────────────────────────
+// Três DOMs convivem em produção: a interface nova (2026, classes ofuscadas,
+// ancorada em `componentkey`), a clássica logada e a pública (deslogada).
+// Cada extrator tenta as três, nessa ordem.
+
+const LINKEDIN_HOST = /(^|\.)linkedin\.com$/i;
+
+// Linhas de card que não são localização (data, candidatos, selos)
+const LINKEDIN_LINHA_EXTRA = /^(posted|publicad|há \d|\d+\s*(h|d|w|mo|y|min)\b|.*\bago$|.*applicant|.*candidat|easy apply|candidatura simplificada|promoted|promovid|·|be an early|.*alumni|.*ex-alun|viewed|visualizad|verified|verificad)/i;
+
+function isLinkedIn() {
+  return LINKEDIN_HOST.test(location.hostname);
+}
+
+function linkedInJobUrl(id) {
+  return `https://www.linkedin.com/jobs/view/${id}/`;
+}
+
+/** Id da vaga numa URL do LinkedIn: /jobs/view/<slug>-<id> ou ?currentJobId=<id>. */
+function linkedInIdFromUrl(href) {
+  try {
+    const url = new URL(href, location.href);
+    const match = url.pathname.match(/\/jobs\/view\/(?:[^/?#]*-)?(\d{6,})(?=[/?#]|$)/);
+    if (match) return match[1];
+    return url.searchParams.get('currentJobId') || '';
+  } catch (err) {
+    return '';
+  }
+}
+
+function linkedInLines(el) {
+  const texto = el ? (el.innerText !== undefined ? el.innerText : el.textContent) : '';
+  return String(texto || '').split('\n').map((s) => s.trim()).filter(Boolean);
+}
+
+function linkedInText(sel, root = document) {
+  const el = root.querySelector(sel);
+  return el ? normalizeJobText(el.innerText || el.textContent) : '';
+}
+
+/** "Company, Foundey." → "Foundey" */
+function linkedInCompanyFromAria(label) {
+  return String(label || '').replace(/^(company|empresa),\s*/i, '').replace(/\.$/, '').trim();
+}
+
+/** "Brazil · 3 days ago · Over 100 applicants" → "Brazil" */
+function linkedInFirstSegment(texto) {
+  return String(texto || '').split('·')[0].trim();
+}
+
+/**
+ * Vagas listadas na página (busca, coleções, "vagas recomendadas").
+ * Só o que está renderizado nesta página de resultados — sem paginação.
+ */
+function linkedInListJobs() {
+  const vagas = [];
+  const vistos = new Set();
+  const add = (vaga) => {
+    if (!vaga.job_id || !vaga.titulo || vistos.has(vaga.job_id)) return;
+    vistos.add(vaga.job_id);
+    vagas.push({ ...vaga, url: linkedInJobUrl(vaga.job_id) });
+  };
+
+  // 1) Interface nova: card = div[role=button] com componentkey="job-card-component-ref-<id>"
+  document.querySelectorAll('[componentkey^="job-card-component-ref-"]').forEach((card) => {
+    if (card.getAttribute('role') !== 'button') return;
+    const job_id = card.getAttribute('componentkey').replace('job-card-component-ref-', '');
+    const linhas = linkedInLines(card);
+    const titulo = linhas[0] || '';
+    // O título pode vir duplicado (texto visível + versão para leitor de tela)
+    const idx = linhas[1] === titulo ? 2 : 1;
+    const empresaEl = card.querySelector('[aria-label^="Company, " i], [aria-label^="Empresa, " i]');
+    const empresa = linkedInCompanyFromAria(empresaEl && empresaEl.getAttribute('aria-label')) || linhas[idx] || '';
+    const proxima = linhas[idx + 1] || '';
+    add({ job_id, titulo, empresa, local: LINKEDIN_LINHA_EXTRA.test(proxima) ? '' : proxima });
+  });
+  if (vagas.length) return { vagas, fonte: 'linkedin:nova' };
+
+  // 2) Clássica logada
+  document.querySelectorAll('li[data-occludable-job-id], .job-card-container[data-job-id]').forEach((card) => {
+    const job_id = card.getAttribute('data-occludable-job-id') ||
+      card.getAttribute('data-job-id') ||
+      linkedInIdFromUrl((card.querySelector('a[href*="/jobs/view/"]') || {}).href || '');
+    add({
+      job_id,
+      titulo: linkedInText('.job-card-list__title--link, .job-card-list__title, .artdeco-entity-lockup__title', card).split('\n')[0],
+      empresa: linkedInText('.artdeco-entity-lockup__subtitle, .job-card-container__primary-description, .job-card-container__company-name', card),
+      local: linkedInFirstSegment(linkedInText('.artdeco-entity-lockup__caption, .job-card-container__metadata-item, .job-card-container__metadata-wrapper', card))
+    });
+  });
+  if (vagas.length) return { vagas, fonte: 'linkedin:classica' };
+
+  // 3) Pública (deslogada)
+  document.querySelectorAll('.base-card[data-entity-urn], ul.jobs-search__results-list > li').forEach((card) => {
+    const urnEl = card.hasAttribute('data-entity-urn') ? card : card.querySelector('[data-entity-urn]');
+    const urn = urnEl ? urnEl.getAttribute('data-entity-urn') || '' : '';
+    const job_id = (urn.match(/(\d{6,})$/) || [])[1] ||
+      linkedInIdFromUrl((card.querySelector('a[href*="/jobs/view/"]') || {}).href || '');
+    add({
+      job_id,
+      titulo: linkedInText('.base-search-card__title', card),
+      empresa: linkedInText('.base-search-card__subtitle', card),
+      local: linkedInText('.job-search-card__location', card)
+    });
+  });
+  return { vagas, fonte: vagas.length ? 'linkedin:publica' : '' };
+}
+
+/**
+ * A vaga em foco: a página /jobs/view/<id> ou o painel de detalhe aberto numa
+ * busca (?currentJobId=<id>). Null quando a página não tem vaga em foco.
+ */
+function linkedInFocusedJob() {
+  const job_id = linkedInIdFromUrl(location.href);
+  if (!job_id) return null;
+
+  const foraDeCard = (el) => !el.closest(
+    '[componentkey^="job-card-component-ref-"], li[data-occludable-job-id], .job-card-container, .base-card'
+  );
+  let titulo = '';
+  let empresa = '';
+  let local = '';
+  let descricao = '';
+  let variante = 'nova';
+
+  if (document.querySelector('.job-details-jobs-unified-top-card__job-title, .jobs-unified-top-card__job-title')) {
+    // Clássica logada
+    variante = 'classica';
+    titulo = linkedInText('.job-details-jobs-unified-top-card__job-title, .jobs-unified-top-card__job-title').split('\n')[0];
+    empresa = linkedInText('.job-details-jobs-unified-top-card__company-name, .jobs-unified-top-card__company-name');
+    local = linkedInFirstSegment(linkedInText(
+      '.job-details-jobs-unified-top-card__primary-description-container, .job-details-jobs-unified-top-card__tertiary-description-container, .jobs-unified-top-card__primary-description'
+    ));
+    descricao = linkedInText('#job-details, .jobs-description__content');
+  } else if (document.querySelector('.top-card-layout__title, .topcard__title')) {
+    // Pública
+    variante = 'publica';
+    titulo = linkedInText('.top-card-layout__title, .topcard__title');
+    empresa = linkedInText('.topcard__org-name-link, .topcard__flavor a');
+    local = linkedInText('.topcard__flavor--bullet');
+    descricao = linkedInText('.description__text, .show-more-less-html__markup');
+  } else {
+    // Interface nova: empresa em aria-label; título no link canônico da vaga
+    // ou na linha seguinte à empresa no bloco do topo
+    const empresaEl = [...document.querySelectorAll('[aria-label^="Company, " i], [aria-label^="Empresa, " i]')].find(foraDeCard);
+    empresa = linkedInCompanyFromAria(empresaEl && empresaEl.getAttribute('aria-label'));
+    const link = [...document.querySelectorAll('a[href*="/jobs/view/"]')]
+      .find((a) => foraDeCard(a) && linkedInIdFromUrl(a.href) === job_id);
+    titulo = link ? linkedInLines(link)[0] || '' : '';
+
+    let bloco = empresaEl;
+    while (bloco && bloco !== document.body && linkedInLines(bloco).length < 3) bloco = bloco.parentElement;
+    const linhas = bloco && bloco !== document.body && linkedInLines(bloco).length <= 40 ? linkedInLines(bloco) : [];
+    if (!titulo && empresa) titulo = linhas[linhas.indexOf(empresa) + 1] || '';
+    const meta = linhas.find((l) => /\S\s*·\s*\S/.test(l) && !/^(promoted|promovid)/i.test(l));
+    local = meta ? linkedInFirstSegment(meta) : '';
+
+    const h2 = [...document.querySelectorAll('h2')].find((h) => /about the job|sobre a vaga/i.test(h.textContent));
+    if (h2) {
+      let secao = h2.parentElement;
+      while (secao && secao !== document.body && normalizeJobText(secao.innerText).length < 400) secao = secao.parentElement;
+      if (secao && secao !== document.body) descricao = normalizeJobText(secao.innerText);
+    }
+  }
+
+  // <title> "Cargo | Empresa | LinkedIn" cobre o que os seletores não acharam.
+  // O cargo pode conter "|" ("Senior UI | UX Designer"), então a empresa é o
+  // último segmento e o cargo é o que sobra antes dela.
+  const semSufixo = document.title.replace(/\s*\|\s*LinkedIn.*$/i, '').trim();
+  const segmentos = titleSegments(semSufixo);
+  if (!empresa && segmentos.length >= 2) empresa = segmentos[segmentos.length - 1];
+  if (!titulo && semSufixo && !/\bjobs?\b|\bvagas?\b/i.test(segmentos[0] || '')) {
+    const sufixoEmpresa = empresa && semSufixo.endsWith(empresa) ? semSufixo.slice(0, -empresa.length) : semSufixo;
+    titulo = sufixoEmpresa.replace(/\s*\|\s*$/, '').trim();
+  }
+
+  return { job_id, titulo, empresa, local, descricao, variante, url: linkedInJobUrl(job_id) };
+}
+
+/** Lista de vagas da página, quando a página é uma lista. */
+function extractJobList() {
+  if (isLinkedIn()) {
+    const { vagas, fonte } = linkedInListJobs();
+    return { vagas, fonte, plataforma: 'linkedin', focoJobId: linkedInIdFromUrl(location.href) };
+  }
+  return { vagas: [], fonte: '', plataforma: '', focoJobId: '' };
 }
 
 // Listen for messages
@@ -485,7 +727,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
 
         case 'EXTRACT_JOB_INFO': {
-          sendResponse({ success: true, ...extractJobPosting() });
+          const info = extractJobPosting();
+          auditLog('extract_job_info', {
+            titulo: info.titulo, empresa: info.empresa, local: info.local, job_id: info.job_id,
+            plataforma: info.plataforma, variante: info.variante, fonte: info.fonte,
+            descricao: info.descricao.length, urlCanonica: info.url
+          });
+          sendResponse({ success: true, ...info });
+          break;
+        }
+
+        case 'EXTRACT_JOB_LIST': {
+          const lista = extractJobList();
+          auditLog('extract_job_list', { n: lista.vagas.length, fonte: lista.fonte, focoJobId: lista.focoJobId });
+          sendResponse({ success: true, ...lista });
           break;
         }
 
@@ -494,6 +749,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }
     } catch (err) {
       console.error('[Autofill IA] Erro no listener de mensagens:', err);
+      auditLog('erro_pagina', { type: message && message.type, error: err.message });
       sendResponse({ success: false, error: err.message });
     }
   })();
@@ -838,11 +1094,68 @@ async function saveAnswerToServer(field, question, answer) {
   }
 }
 
-function handleGenerateClick(field) {
-  showGenerateModal(field);
+// A última resposta gerada pelo ⚡ fica guardada por página + pergunta: reabrir
+// o modal mostra essa versão em vez de gastar outra geração.
+const GENERATED_ANSWER_PREFIX = 'generatedAnswer::';
+const MAX_GENERATED_ANSWERS = 200;
+
+function generatedAnswerKey(field) {
+  const pergunta = window.formFiller.normalize(field.question);
+  return `${GENERATED_ANSWER_PREFIX}${location.origin}${location.pathname}::${pergunta}`;
 }
 
-function showGenerateModal(field) {
+async function loadGeneratedAnswer(field) {
+  try {
+    const key = generatedAnswerKey(field);
+    const data = await chrome.storage.local.get(key);
+    return data[key] || null;
+  } catch (err) {
+    console.warn('[Autofill IA] Não foi possível ler a resposta gerada salva:', err);
+    return null;
+  }
+}
+
+async function saveGeneratedAnswer(field, resposta, instrucao) {
+  try {
+    await chrome.storage.local.set({
+      [generatedAnswerKey(field)]: { resposta, instrucao, updatedAt: Date.now() }
+    });
+    await pruneGeneratedAnswers();
+  } catch (err) {
+    console.warn('[Autofill IA] Não foi possível salvar a resposta gerada:', err);
+  }
+}
+
+/** Mantém só as respostas mais recentes, para o storage não crescer sem limite. */
+async function pruneGeneratedAnswers() {
+  const all = await chrome.storage.local.get(null);
+  const excess = Object.entries(all)
+    .filter(([key]) => key.startsWith(GENERATED_ANSWER_PREFIX))
+    .sort(([, a], [, b]) => (b.updatedAt || 0) - (a.updatedAt || 0))
+    .slice(MAX_GENERATED_ANSWERS)
+    .map(([key]) => key);
+  if (excess.length) await chrome.storage.local.remove(excess);
+}
+
+/**
+ * O campo guardado no clique do ⚡ pode ter sido recriado pelo site enquanto o
+ * modal estava aberto (React/Vue remontam o nó e o atributo da extensão some).
+ * Nesse caso reencontra o campo pela pergunta numa varredura nova.
+ */
+function resolveLiveField(field) {
+  if (window.domParser.getElement(field.elementIds[0])) return field;
+  const current = window.domParser.parseForm();
+  return current.find(f => f.id === field.id) ||
+    current.find(f => f.type === field.type && f.question === field.question) ||
+    null;
+}
+
+async function handleGenerateClick(field) {
+  const salva = await loadGeneratedAnswer(field);
+  showGenerateModal(field, salva);
+}
+
+function showGenerateModal(field, salva) {
   const overlay = document.createElement('div');
   overlay.className = 'autofill-modal-overlay';
   overlay.innerHTML = `
@@ -858,60 +1171,145 @@ function showGenerateModal(field) {
           <label class="autofill-modal-label">Instrução (opcional)</label>
           <textarea class="autofill-modal-textarea autofill-instrucao-input" rows="3" placeholder="Ex.: mencionar minha experiência com fintech e design systems"></textarea>
         </div>
-        <div id="autofill-gen-result" hidden>
+        <div class="autofill-modal-group autofill-gen-result" hidden>
           <label class="autofill-modal-label">Resposta gerada</label>
           <textarea class="autofill-modal-textarea autofill-gen-answer" rows="5"></textarea>
+          <div class="autofill-modal-hint autofill-gen-hint" hidden></div>
         </div>
       </div>
       <div class="autofill-modal-footer">
-        <button class="autofill-modal-btn autofill-modal-btn-cancel">Cancelar</button>
-        <button class="autofill-modal-btn autofill-modal-btn-confirm autofill-gen-submit">Gerar</button>
+        <button type="button" class="autofill-modal-btn autofill-modal-btn-cancel">Cancelar</button>
+        <button type="button" class="autofill-modal-btn autofill-modal-btn-confirm autofill-gen-submit">Gerar</button>
+        <button type="button" class="autofill-modal-btn autofill-modal-btn-confirm autofill-gen-apply" hidden>Aprovar e preencher</button>
       </div>
     </div>
   `;
   document.body.appendChild(overlay);
 
-  const close = () => overlay.remove();
   const cancelBtn = overlay.querySelector('.autofill-modal-btn-cancel');
-  const submitBtn = overlay.querySelector('.autofill-gen-submit');
+  const generateBtn = overlay.querySelector('.autofill-gen-submit');
+  const applyBtn = overlay.querySelector('.autofill-gen-apply');
   const instrucaoEl = overlay.querySelector('.autofill-instrucao-input');
-  const resultEl = overlay.querySelector('#autofill-gen-result');
+  const resultEl = overlay.querySelector('.autofill-gen-result');
   const answerEl = overlay.querySelector('.autofill-gen-answer');
-  let generated = '';
+  const hintEl = overlay.querySelector('.autofill-gen-hint');
+
+  // Versão já gravada no storage; edições feitas no modal são guardadas ao fechar
+  let savedAnswer = salva ? salva.resposta : '';
+  let busy = false;
+
+  const setBusy = (value) => {
+    busy = value;
+    generateBtn.disabled = value;
+    applyBtn.disabled = value;
+  };
+
+  const showAnswer = (resposta, savedAt) => {
+    answerEl.value = resposta;
+    resultEl.hidden = false;
+    applyBtn.hidden = false;
+    generateBtn.textContent = 'Gerar novamente';
+    generateBtn.classList.replace('autofill-modal-btn-confirm', 'autofill-modal-btn-secondary');
+
+    const avisos = [];
+    if (savedAt) {
+      const quando = new Date(savedAt).toLocaleString('pt-BR', {
+        day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'
+      });
+      avisos.push(`Resposta gerada em ${quando}.`);
+    }
+    if (['text', 'textarea', 'combobox'].includes(field.type) && !isFieldEmpty(field)) {
+      avisos.push('O campo já tem texto; ao aprovar, ele será substituído.');
+    }
+    hintEl.textContent = avisos.join(' ');
+    hintEl.hidden = !avisos.length;
+  };
+
+  if (salva && salva.resposta) {
+    instrucaoEl.value = salva.instrucao || '';
+    showAnswer(salva.resposta, salva.updatedAt);
+  }
+
+  const close = () => {
+    const atual = answerEl.value.trim();
+    if (atual && atual !== savedAnswer) {
+      savedAnswer = atual;
+      saveGeneratedAnswer(field, atual, instrucaoEl.value.trim());
+    }
+    overlay.remove();
+  };
 
   cancelBtn.addEventListener('click', close);
   overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
 
-  submitBtn.addEventListener('click', async () => {
-    if (!generated) {
-      submitBtn.disabled = true;
-      submitBtn.textContent = 'Gerando...';
-      const resp = await new Promise((resolve) => {
+  generateBtn.addEventListener('click', async () => {
+    if (busy) return;
+    setBusy(true);
+    const label = generateBtn.textContent;
+    generateBtn.textContent = 'Gerando...';
+    const instrucao = instrucaoEl.value.trim();
+
+    const resp = await new Promise((resolve) => {
+      try {
         chrome.runtime.sendMessage({
           type: 'GENERATE_ANSWER',
           payload: {
             pergunta: field.question,
             contexto: getPageContext(),
-            instrucao: instrucaoEl.value.trim(),
+            instrucao,
             idioma: /[a-zA-Z]/.test(field.question) && !/[áéíóúâêôãõç]/.test(field.question) ? 'en' : 'pt'
           }
-        }, resolve);
-      });
-      submitBtn.disabled = false;
-      if (!resp || !resp.success) {
-        showToast(`Erro: ${(resp && resp.error) || 'falha ao gerar'}`, 'error');
-        submitBtn.textContent = 'Gerar';
-        return;
+        }, (response) => {
+          if (chrome.runtime.lastError) {
+            resolve({ success: false, error: chrome.runtime.lastError.message });
+            return;
+          }
+          resolve(response);
+        });
+      } catch (err) {
+        resolve({ success: false, error: err.message });
       }
-      generated = resp.resposta;
-      answerEl.value = generated;
-      resultEl.hidden = false;
-      submitBtn.textContent = 'Aprovar e preencher';
-    } else {
-      close();
-      await window.formFiller.fill(field, generated);
-      showToast('Resposta preenchida.', 'success');
+    });
+
+    setBusy(false);
+    generateBtn.textContent = label;
+    const resposta = resp && resp.success ? String(resp.resposta || '').trim() : '';
+    if (!resposta) {
+      console.error('[Autofill IA] Falha ao gerar resposta:', resp);
+      showToast(`Erro: ${(resp && resp.error) || 'falha ao gerar'}`, 'error');
+      return;
     }
+
+    savedAnswer = resposta;
+    showAnswer(resposta);
+    await saveGeneratedAnswer(field, resposta, instrucao);
+  });
+
+  applyBtn.addEventListener('click', async () => {
+    if (busy) return;
+    // Vale o texto que está no modal, inclusive se a pessoa editou
+    const resposta = answerEl.value.trim();
+    if (!resposta) {
+      showToast('A resposta não pode ficar vazia.', 'error');
+      return;
+    }
+
+    setBusy(true);
+    const alvo = resolveLiveField(field);
+    // A pessoa aprovou esta resposta para este campo: substitui o que houver nele
+    const outcome = alvo
+      ? await window.formFiller.fill(alvo, resposta, { overwrite: true })
+      : { ok: false, reason: 'campo não está mais na página' };
+    setBusy(false);
+
+    if (!outcome || !outcome.ok) {
+      console.warn(`[Autofill IA] Não preencheu "${field.question}":`, outcome);
+      showToast(`Não foi possível preencher: ${(outcome && outcome.reason) || 'falhou'}`, 'error');
+      return;
+    }
+
+    close();
+    showToast('Resposta preenchida.', 'success');
   });
 }
 

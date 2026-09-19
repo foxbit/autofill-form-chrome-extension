@@ -56,6 +56,23 @@
         <input type="text" id="apiUrl" placeholder="http://127.0.0.1:8790" spellcheck="false" autocomplete="url">
       </div>
 
+      <div class="model-field">
+        <label id="modelLabel" class="field-label" for="aiModel">Modelo de IA (opencode)</label>
+        <div class="model-row">
+          <div class="input-wrap">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="7" y="7" width="10" height="10" rx="2"/>
+              <path d="M10 3v4M14 3v4M10 17v4M14 17v4M3 10h4M3 14h4M17 10h4M17 14h4"/>
+            </svg>
+            <select id="aiModel" aria-describedby="modelHint" disabled>
+              <option value="">Padrão do servidor</option>
+            </select>
+          </div>
+          <button id="btnSaveModel" class="btn btn-secondary btn-save" type="button" disabled>Salvar</button>
+        </div>
+        <p id="modelHint" class="field-hint" data-tone="info">Carregando modelos…</p>
+      </div>
+
       <div class="toggle-row">
         <label class="toggle-copy" for="togglePageUi">
           <strong>Ativa na página</strong>
@@ -118,6 +135,21 @@
       </div>
     </div>
 
+    <section id="batchCard" class="result batch-card" hidden aria-labelledby="batchTitle">
+      <div class="section-header">
+        <p id="batchTitle" class="result-title">Vagas nesta página</p>
+        <button id="btnBatchClose" class="terminal-clear" type="button">Fechar</button>
+      </div>
+      <p id="batchHint" class="result-name"></p>
+      <ul id="batchList" class="batch-list" aria-label="Vagas encontradas na página"></ul>
+      <div class="result-actions">
+        <button id="btnBatchCapture" class="btn btn-primary btn-small" type="button" data-loading-label="Cadastrando…">
+          <span class="button-label">Cadastrar selecionadas</span>
+        </button>
+        <button id="btnBatchToggle" class="btn btn-secondary btn-small" type="button">Desmarcar todas</button>
+      </div>
+    </section>
+
     <section class="activity-terminal" aria-labelledby="activityTitle">
       <div class="terminal-header">
         <div class="terminal-title">
@@ -125,7 +157,10 @@
           <span id="activityTitle">Atividade</span>
           <span id="terminalState" class="terminal-state" data-state="idle">em espera</span>
         </div>
-        <button id="btnClearActivity" class="terminal-clear" type="button">Limpar</button>
+        <div class="terminal-actions">
+          <button id="btnCopyLog" class="terminal-clear" type="button" title="Copia o log de auditoria: painel, página e servidor">Copiar log</button>
+          <button id="btnClearActivity" class="terminal-clear" type="button">Limpar</button>
+        </div>
       </div>
       <div id="activityLog" class="terminal-output" role="log" aria-live="off" aria-label="Registro de atividade"></div>
     </section>

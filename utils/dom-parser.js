@@ -46,7 +46,11 @@ window.domParser = {
   getFormControls() {
     const controls = new Set();
     for (const root of this.getRoots()) {
-      root.querySelectorAll('input, textarea, select, [role="combobox"]').forEach((el) => controls.add(el));
+      root.querySelectorAll('input, textarea, select, [role="combobox"]').forEach((el) => {
+        // The extension's own modals are not part of the page form
+        if (el.closest('.autofill-modal-overlay')) return;
+        controls.add(el);
+      });
     }
     return [...controls];
   },
