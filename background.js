@@ -22,6 +22,24 @@ async function getClient() {
   return cachedHermes;
 }
 
+// Log de auditoria compartilhado com página e painel (chrome.storage.local.auditLog)
+const AUDIT_LOG_MAX = 300;
+let auditQueue = Promise.resolve();
+
+function auditLog(evento, dados = {}) {
+  console.debug('[Autofill IA]', evento, dados);
+  auditQueue = auditQueue.then(async () => {
+    try {
+      const { auditLog: atual = [] } = await chrome.storage.local.get('auditLog');
+      atual.push({ ts: new Date().toISOString(), origem: 'background', evento, dados });
+      await chrome.storage.local.set({ auditLog: atual.slice(-AUDIT_LOG_MAX) });
+    } catch (e) {
+      /* só console */
+    }
+  });
+  return auditQueue;
+}
+
 /** Chave de comparação de URL: sem hash, sem barra final, minúscula. */
 function chaveUrl(url) {
   return String(url || '').trim().replace(/#.*$/, '').replace(/\/+$/, '').toLowerCase();
@@ -271,6 +289,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           const client = await getClient();
           const lote = await capturarVagas(client, [vaga], plataforma);
           const [resultado] = lote.itens;
+          auditLog('capture_vaga', {
+            titulo: vaga.titulo, job_id: vaga.job_id, url: vaga.url, plataforma,
+            estado: resultado.estado, motivo: resultado.motivo, arquivo: resultado.arquivo, banco_total: lote.banco_total
+          });
           sendResponse({
             success: resultado.estado !== 'falha',
             error: resultado.estado === 'falha' ? resultado.motivo : undefined,
@@ -286,6 +308,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           const { vagas, plataforma } = message.payload;
           const client = await getClient();
           const lote = await capturarVagas(client, vagas || [], plataforma);
+          auditLog('capture_vagas', {
+            n: (vagas || []).length, plataforma, banco_total: lote.banco_total,
+            itens: lote.itens.map((i) => ({ job_id: i.job_id, estado: i.estado, motivo: i.motivo }))
+          });
           sendResponse({ success: true, ...lote });
           break;
         }
@@ -302,6 +328,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }
     } catch (err) {
       console.error('Service worker message handler error:', err);
+      auditLog('erro_background', { type: message && message.type, error: err.message });
       sendResponse({ success: false, error: err.message });
     }
   })();

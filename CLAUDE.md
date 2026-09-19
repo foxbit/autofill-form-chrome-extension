@@ -72,6 +72,19 @@ para autopreencher formulários de candidatura, capturar vagas e gerar currícul
   segue funcionando. O painel só grava no storage — cada aba reage sozinha via
   `chrome.storage.onChanged`, sem mensagem por aba.
 
+### Mensagens para a aba
+- **Frame principal**: `EXTRACT_JOB_INFO` e `EXTRACT_JOB_LIST` vão com `frameId: 0`. Sem isso a
+  mensagem chega a todos os iframes (o content script roda em `all_frames`) e a primeira
+  resposta vence — no LinkedIn um iframe `/preload/` "identificava" a vaga com dados vazios.
+  Só a varredura de formulário percorre os frames, e faz isso um a um (`scanFormInAllFrames`).
+
+### Log de auditoria
+- `chrome.storage.local.auditLog` (últimas 300 entradas): página (`origem: pagina`, com
+  `frame` e `url`), background e painel escrevem com `auditLog(evento, dados)`; cada
+  contexto enfileira as próprias gravações. O painel copia tudo em "Copiar log" (terminal
+  de atividade). Eventos: `extract_job_info`, `extract_job_list`, `capture_vaga`,
+  `capture_vagas`, `atividade` (linhas do painel), `erro_pagina`, `erro_background`.
+
 ### Formulários (Plataformas)
 - **Gupy/Workday/GreenHouse** — heurísticas especiais no `dom-parser.js`
 - **Comboboxes** — **preencher** (digita, espera o listbox, clica na opção). Campos como País/Cidade são obrigatórios. O `dom-parser` ainda detecta combobox e os inclui no parse.

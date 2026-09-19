@@ -56,8 +56,31 @@ function setTerminalState(state = 'idle') {
   terminalStateEl.textContent = labels[state] || labels.idle;
 }
 
+// Log de auditoria compartilhado com página e background (chrome.storage.local.auditLog)
+const AUDIT_LOG_MAX = 300;
+let auditQueue = Promise.resolve();
+
+function auditLog(evento, dados = {}) {
+  auditQueue = auditQueue.then(async () => {
+    try {
+      const { auditLog: atual = [] } = await chrome.storage.local.get('auditLog');
+      atual.push({ ts: new Date().toISOString(), origem: 'painel', evento, dados });
+      await chrome.storage.local.set({ auditLog: atual.slice(-AUDIT_LOG_MAX) });
+    } catch (err) {
+      console.warn('[Painel] auditoria indisponível:', err);
+    }
+  });
+  return auditQueue;
+}
+
+function formatAuditEntry(entrada) {
+  const onde = [entrada.origem, entrada.frame].filter(Boolean).join('/');
+  return `${entrada.ts} [${onde}] ${entrada.evento}${entrada.url ? ` ${entrada.url}` : ''} ${JSON.stringify(entrada.dados || {})}`;
+}
+
 function addActivity(message, tone = 'info') {
   if (!message) return;
+  auditLog('atividade', { tone, message: String(message) });
 
   const entry = document.createElement('div');
   entry.className = 'terminal-entry';
@@ -247,9 +270,12 @@ async function ensureContentScript(tabId) {
 
 async function extractJobInfo(tabId) {
   await ensureContentScript(tabId);
-  const res = await sendToTab(tabId, { type: 'EXTRACT_JOB_INFO' });
+  // Só o frame principal: sem frameId a mensagem vai a todos os iframes da
+  // aba e a primeira resposta vence — um iframe de anúncio "identificava" a vaga.
+  const res = await sendToTab(tabId, { type: 'EXTRACT_JOB_INFO' }, 0);
   if (res && res.success) return res;
   const tab = await chrome.tabs.get(tabId);
+  addActivity(`Página sem resposta do script (${(res && res.error) || 'sem detalhe'}); usando o título da aba.`, 'error');
   return {
     success: true, titulo: tab.title, empresa: '', local: '', url: tab.url,
     observacoes: '', descricao: '', requisitos: '', pagina: '', skills: [],
@@ -627,11 +653,19 @@ document.getElementById('btnCapture').addEventListener('click', (event) => runAc
 
   setStatus('Lendo a página em foco…', 'info');
   const info = await extractJobInfo(tab.id);
-  const lista = await sendToTab(tab.id, { type: 'EXTRACT_JOB_LIST' });
+  const lista = await sendToTab(tab.id, { type: 'EXTRACT_JOB_LIST' }, 0);
   const vagas = lista && lista.success ? lista.vagas : [];
+  addActivity(
+    `Leitura: ${info.titulo || '(sem título)'}${info.empresa ? ` — ${info.empresa}` : ''}` +
+      ` · id ${info.job_id || '—'} · fonte ${info.fonte || '—'} · lista ${vagas.length}`,
+    'info'
+  );
 
-  // Página de busca: a pessoa escolhe o que entra, em vez de cadastrar às cegas
-  if (vagas.length >= 2) {
+  // Página de busca: a pessoa escolhe o que entra, em vez de cadastrar às cegas.
+  // Numa página de vaga com "vagas semelhantes" a vaga em foco não está na
+  // lista — aí vale a vaga da página, não a lista.
+  const focoNaLista = !info.job_id || vagas.some((v) => v.job_id === info.job_id);
+  if (vagas.length >= 2 && focoNaLista) {
     addActivity(`Lista com ${vagas.length} vagas encontrada (${lista.fonte}).`, 'info');
     renderBatch(lista);
     setStatus('Marque abaixo as vagas que entram na sua lista.', 'info');
@@ -764,6 +798,28 @@ document.getElementById('btnDownloadCv').addEventListener('click', async () => {
     addActivity('Escolha onde salvar o currículo.', 'success');
   } catch (err) {
     setStatus(`Não foi possível baixar o currículo: ${err.message}`, 'error');
+  }
+});
+
+document.getElementById('btnCopyLog').addEventListener('click', async () => {
+  const { auditLog: entradas = [] } = await chrome.storage.local.get('auditLog');
+  if (!entradas.length) return addActivity('Log de auditoria vazio.', 'info');
+  const texto = entradas.map(formatAuditEntry).join('\n');
+  try {
+    await navigator.clipboard.writeText(texto);
+    addActivity(`Log copiado: ${entradas.length} entradas (página, painel e servidor).`, 'success');
+  } catch (err) {
+    // Sem foco no painel a área de transferência recusa; o arquivo sempre funciona
+    console.warn('[Painel] Área de transferência indisponível, salvando arquivo:', err);
+    try {
+      const url = URL.createObjectURL(new Blob([texto], { type: 'text/plain' }));
+      const filename = `autofill-auditoria-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.log`;
+      await chrome.downloads.download({ url, filename, saveAs: true });
+      addActivity(`Log salvo em arquivo: ${filename} (${entradas.length} entradas).`, 'success');
+    } catch (err2) {
+      console.error('[Painel] Falha ao exportar o log:', err2);
+      addActivity(`Não foi possível exportar o log: ${err2.message}`, 'error');
+    }
   }
 });
 

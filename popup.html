@@ -157,7 +157,10 @@
           <span id="activityTitle">Atividade</span>
           <span id="terminalState" class="terminal-state" data-state="idle">em espera</span>
         </div>
-        <button id="btnClearActivity" class="terminal-clear" type="button">Limpar</button>
+        <div class="terminal-actions">
+          <button id="btnCopyLog" class="terminal-clear" type="button" title="Copia o log de auditoria: painel, página e servidor">Copiar log</button>
+          <button id="btnClearActivity" class="terminal-clear" type="button">Limpar</button>
+        </div>
       </div>
       <div id="activityLog" class="terminal-output" role="log" aria-live="off" aria-label="Registro de atividade"></div>
     </section>

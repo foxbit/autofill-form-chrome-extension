@@ -303,6 +303,8 @@ select option { color: var(--ink); background: var(--surface); }
 .result-name { color: var(--muted-strong); font-size: 12px; overflow-wrap: anywhere; margin: 3px 0 10px; }
 .result-actions { display: flex; gap: 8px; }
 
+.terminal-actions { display: flex; gap: 6px; }
+
 .batch-card .section-header { margin-bottom: 4px; }
 .batch-card .result-name { margin-bottom: 8px; }
 .batch-list { list-style: none; display: grid; gap: 4px; max-height: 280px; overflow-y: auto; margin: 0 0 10px; padding-right: 2px; }

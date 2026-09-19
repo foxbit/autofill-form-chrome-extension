@@ -341,6 +341,7 @@ function extractJobPosting() {
   // LinkedIn: <title> e metas descrevem a busca ("Product Designer jobs in…"),
   // não a vaga em foco. O extrator dedicado lê o painel da vaga.
   let jobId = '';
+  let variante = '';
   const plataforma = isLinkedIn() ? 'linkedin' : '';
   if (plataforma === 'linkedin') {
     const vaga = linkedInFocusedJob();
@@ -349,6 +350,7 @@ function extractJobPosting() {
       empresa = vaga.empresa || empresa;
       local = vaga.local || local;
       jobId = vaga.job_id;
+      variante = vaga.variante;
       if (vaga.descricao.length > descricao.length) {
         descricao = vaga.descricao;
         fonte = 'linkedin';
@@ -385,6 +387,7 @@ function extractJobPosting() {
     url: jobId ? linkedInJobUrl(jobId) : location.href,
     job_id: jobId,
     plataforma,
+    variante,
     observacoes: (resumo || descricao).slice(0, 300),
     descricao,
     requisitos,
@@ -392,6 +395,36 @@ function extractJobPosting() {
     skills: skills.slice(0, 40),
     fonte
   };
+}
+
+// ─── log de auditoria ───────────────────────────────────
+// Registro leve em chrome.storage.local (`auditLog`, últimas entradas) para
+// diagnosticar captura e preenchimento sem DevTools: página, background e
+// painel escrevem na mesma lista; o painel copia tudo com "Copiar log".
+const AUDIT_LOG_MAX = 300;
+let auditQueue = Promise.resolve();
+
+function auditLog(evento, dados = {}) {
+  console.debug('[Autofill IA]', evento, dados);
+  const entrada = {
+    ts: new Date().toISOString(),
+    origem: 'pagina',
+    frame: window === window.top ? 'top' : 'iframe',
+    url: location.href.slice(0, 300),
+    evento,
+    dados
+  };
+  // Fila local: leituras e gravações em sequência para não perder entradas
+  auditQueue = auditQueue.then(async () => {
+    try {
+      const { auditLog: atual = [] } = await chrome.storage.local.get('auditLog');
+      atual.push(entrada);
+      await chrome.storage.local.set({ auditLog: atual.slice(-AUDIT_LOG_MAX) });
+    } catch (err) {
+      /* storage indisponível (página descarregada): fica só no console */
+    }
+  });
+  return auditQueue;
 }
 
 // ─── LinkedIn ───────────────────────────────────────────
@@ -517,9 +550,11 @@ function linkedInFocusedJob() {
   let empresa = '';
   let local = '';
   let descricao = '';
+  let variante = 'nova';
 
   if (document.querySelector('.job-details-jobs-unified-top-card__job-title, .jobs-unified-top-card__job-title')) {
     // Clássica logada
+    variante = 'classica';
     titulo = linkedInText('.job-details-jobs-unified-top-card__job-title, .jobs-unified-top-card__job-title').split('\n')[0];
     empresa = linkedInText('.job-details-jobs-unified-top-card__company-name, .jobs-unified-top-card__company-name');
     local = linkedInFirstSegment(linkedInText(
@@ -528,6 +563,7 @@ function linkedInFocusedJob() {
     descricao = linkedInText('#job-details, .jobs-description__content');
   } else if (document.querySelector('.top-card-layout__title, .topcard__title')) {
     // Pública
+    variante = 'publica';
     titulo = linkedInText('.top-card-layout__title, .topcard__title');
     empresa = linkedInText('.topcard__org-name-link, .topcard__flavor a');
     local = linkedInText('.topcard__flavor--bullet');
@@ -556,12 +592,18 @@ function linkedInFocusedJob() {
     }
   }
 
-  // <title> "Cargo | Empresa | LinkedIn" cobre o que os seletores não acharam
-  const segmentos = titleSegments(document.title).filter((s) => !/linkedin/i.test(s));
-  if (!titulo && segmentos[0] && !/\bjobs?\b|\bvagas?\b/i.test(segmentos[0])) titulo = segmentos[0];
-  if (!empresa && segmentos[1]) empresa = segmentos[1];
+  // <title> "Cargo | Empresa | LinkedIn" cobre o que os seletores não acharam.
+  // O cargo pode conter "|" ("Senior UI | UX Designer"), então a empresa é o
+  // último segmento e o cargo é o que sobra antes dela.
+  const semSufixo = document.title.replace(/\s*\|\s*LinkedIn.*$/i, '').trim();
+  const segmentos = titleSegments(semSufixo);
+  if (!empresa && segmentos.length >= 2) empresa = segmentos[segmentos.length - 1];
+  if (!titulo && semSufixo && !/\bjobs?\b|\bvagas?\b/i.test(segmentos[0] || '')) {
+    const sufixoEmpresa = empresa && semSufixo.endsWith(empresa) ? semSufixo.slice(0, -empresa.length) : semSufixo;
+    titulo = sufixoEmpresa.replace(/\s*\|\s*$/, '').trim();
+  }
 
-  return { job_id, titulo, empresa, local, descricao, url: linkedInJobUrl(job_id) };
+  return { job_id, titulo, empresa, local, descricao, variante, url: linkedInJobUrl(job_id) };
 }
 
 /** Lista de vagas da página, quando a página é uma lista. */
@@ -685,12 +727,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
 
         case 'EXTRACT_JOB_INFO': {
-          sendResponse({ success: true, ...extractJobPosting() });
+          const info = extractJobPosting();
+          auditLog('extract_job_info', {
+            titulo: info.titulo, empresa: info.empresa, local: info.local, job_id: info.job_id,
+            plataforma: info.plataforma, variante: info.variante, fonte: info.fonte,
+            descricao: info.descricao.length, urlCanonica: info.url
+          });
+          sendResponse({ success: true, ...info });
           break;
         }
 
         case 'EXTRACT_JOB_LIST': {
-          sendResponse({ success: true, ...extractJobList() });
+          const lista = extractJobList();
+          auditLog('extract_job_list', { n: lista.vagas.length, fonte: lista.fonte, focoJobId: lista.focoJobId });
+          sendResponse({ success: true, ...lista });
           break;
         }
 
@@ -699,6 +749,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }
     } catch (err) {
       console.error('[Autofill IA] Erro no listener de mensagens:', err);
+      auditLog('erro_pagina', { type: message && message.type, error: err.message });
       sendResponse({ success: false, error: err.message });
     }
   })();
