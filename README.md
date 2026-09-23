@@ -27,7 +27,8 @@ content.js (formulário) ──► background.js (service worker) ──► Herm
 |---|---|
 | **Autopreencher** | reanalisa a aba ativa e seus modais/iframes → `POST /fill` (perfil + QA histórico) → preenche os campos |
 | **Capturar vaga** | extrai título/empresa/descrição da página → `POST /capture` → Banco de Vagas |
-| **Gerar CV** | extrai o texto da vaga → `POST /cv` (template + Chrome headless) → PDF personalizado |
+| **Gerar CV** | extrai o texto da vaga → `POST /cv` (template + Chrome headless) → PDF personalizado numa única página; Abrir mostra numa aba, Baixar pergunta onde salvar |
+| **Aprender** | ícone ☁️ por campo: salva correção → `POST /learn` (refina o QA no cofre) |
 
 ### O que a extensão envia da vaga
 
@@ -47,19 +48,22 @@ Os seletores de ATS (Gupy, Greenhouse, Lever, Ashby, Workday, LinkedIn, Indeed�
 **destacar** o trecho principal; num site desconhecido a extração cai no corpo da página e o CV
 continua sendo personalizado.
 
-### Paginação do CV
+### Página única do CV
 
-O `POST /cv` leva o objeto `paginacao` definido em `popup.js` (`CV_PAGINACAO`); o Hermes usa
-esses valores para montar o CSS de impressão do template — a quebra de página cai **entre**
-os blocos (experiência, formação, idiomas) em vez de cortá-los ao meio.
+O `POST /cv` leva o objeto `paginacao` definido em `popup.js` (`CV_PAGINACAO`). No modo
+`pagina-unica` o Hermes renderiza o HTML inteiro numa **única página PDF**: largura fixa e altura
+igual ao conteúdo, sem quebras de página — o arquivo é feito para envio digital, não para impressão.
 
 | Campo | Padrão | Descrição |
 |---|---|---|
-| `formato` | `Letter` | tamanho da folha (`Letter`, `A4`…) |
-| `margem_topo` / `margem_lateral` / `margem_rodape` | `0.35in` / `0.4in` / `0.35in` | margens do `@page` |
-| `quebrar_blocos` | `true` | `false` volta ao corte livre |
-| `evitar_quebra_em` | `[]` | seletores extras que não podem ser partidos |
-| **Aprender** | ícone ☁️ por campo: salva correção → `POST /learn` (refina o QA no cofre) |
+| `modo` | `pagina-unica` | `paginada` volta ao CSS de impressão com quebras entre blocos |
+| `largura` | `8.5in` | largura da página |
+| `altura` | `auto` | o servidor mede o conteúdo renderizado |
+| `margem_topo` / `margem_lateral` / `margem_rodape` | `0.35in` / `0.4in` / `0.35in` | margens |
+| `formato` / `quebrar_blocos` | `Letter` / `false` | só para um servidor antigo, que ignora `modo` |
+
+A resposta traz `paginas`, `idioma` detectado, `reescrito` (se a IA personalizou) e `top_skills`;
+o painel avisa quando o PDF não saiu com uma página ou quando o CV saiu sem personalização.
 
 ## Configuração
 

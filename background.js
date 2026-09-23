@@ -244,6 +244,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           const suggestions = geradas.filter(Boolean);
           if (suggestions.length) {
             debugLogs.push(`IA redigiu ${suggestions.length} resposta(s) — aguardando sua aprovação.`);
+            try {
+              const storageItems = {};
+              for (const s of suggestions) {
+                const pNorm = String(s.question || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9\s]/gi, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
+                storageItems[`generatedAnswer::global::${pNorm}`] = { resposta: s.value, instrucao: '', updatedAt: Date.now() };
+              }
+              await chrome.storage.local.set(storageItems);
+            } catch (e) {
+              /* ignora erro no storage */
+            }
           }
 
           sendResponse({ success: true, results, unmatched, suggestions, debugLogs });
@@ -318,8 +328,29 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
         case 'GENERATE_CV': {
           const client = await getClient();
-          const data = await client.generateCv(message.payload);
-          sendResponse({ success: true, data });
+          const payload = message.payload || {};
+          const inicio = Date.now();
+          const data = await client.generateCv(payload);
+          // O servidor devolve `pdf` como caminho absoluto; o painel só precisa do nome
+          const filename = String((data && (data.filename || data.pdf)) || '').split('/').pop();
+          const tamanho = (texto) => String(texto || '').length;
+          auditLog('generate_cv', {
+            cargo: payload.cargo, empresa: payload.empresa, url: payload.url,
+            modo: payload.paginacao && payload.paginacao.modo, idiomaDica: payload.idioma || '',
+            chars: { vaga: tamanho(payload.vaga), descricao: tamanho(payload.descricao), requisitos: tamanho(payload.requisitos), pagina: tamanho(payload.pagina) },
+            skills: (payload.skills || []).length, modelo_enviado: client.modelo || '', ms: Date.now() - inicio,
+            resposta: data ? {
+              ok: data.ok, paginas: data.paginas, tamanho_pagina: data.tamanho_pagina, idioma: data.idioma,
+              reescrito: data.reescrito, fallback_motivo: data.fallback_motivo, modelo: data.modelo,
+              duracao_ms: data.duracao_ms, pdf: filename, top_skills: (data.top_skills || []).slice(0, 8)
+            } : null
+          });
+          sendResponse({
+            success: true,
+            data,
+            filename,
+            download_url: filename ? `${client.apiUrl}/cvs/${encodeURIComponent(filename)}` : ''
+          });
           break;
         }
 

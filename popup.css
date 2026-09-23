@@ -78,16 +78,51 @@ input:focus-visible {
   border: 1px solid var(--line);
   border-radius: 999px;
   color: var(--muted);
+  background: transparent;
   font-size: 10px;
   font-weight: 700;
   line-height: 1;
   padding: 6px 8px;
   white-space: nowrap;
+  cursor: pointer;
+  transition: border-color var(--ease), color var(--ease), background var(--ease);
 }
+.connection-badge:hover { background: rgba(159, 181, 203, .08); }
 .connection-badge[data-state="success"] { border-color: rgba(45, 212, 191, .55); color: var(--success); }
 .connection-badge[data-state="error"] { border-color: rgba(253, 164, 175, .55); color: var(--danger); }
 
-main { display: grid; gap: 12px; margin-top: 16px; }
+main { display: grid; gap: 12px; margin-top: 14px; }
+
+/* ─── abas ─────────────────────────────────────────────── */
+.tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--surface);
+}
+.tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 34px;
+  border: 0;
+  border-radius: 8px;
+  color: var(--muted);
+  background: transparent;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background var(--ease), color var(--ease);
+}
+.tab svg { width: 15px; height: 15px; flex: 0 0 auto; }
+.tab:hover { color: var(--ink); background: rgba(159, 181, 203, .08); }
+.tab[aria-selected="true"] { color: var(--primary-hover); background: rgba(45, 212, 191, .14); }
+.tab-panel { display: grid; gap: 12px; }
+.tab-panel[hidden] { display: none; }
 
 .target-card,
 .settings-card,
@@ -135,6 +170,9 @@ main { display: grid; gap: 12px; margin-top: 16px; }
 .target-copy span { color: var(--muted); font-size: 12px; }
 
 .settings-card { padding: 12px; }
+.settings-card > .section-label { margin-bottom: 10px; }
+.field-actions { display: flex; justify-content: flex-end; margin-top: 6px; }
+.field-actions .text-button { justify-self: auto; }
 
 .toggle-row {
   display: flex;
@@ -145,6 +183,7 @@ main { display: grid; gap: 12px; margin-top: 16px; }
   padding-top: 12px;
   border-top: 1px solid var(--line);
 }
+.toggle-row--flat { margin-top: 0; padding-top: 0; border-top: 0; }
 
 .toggle-copy { display: grid; gap: 2px; cursor: pointer; }
 .toggle-copy strong { color: var(--muted-strong); font-size: 12px; font-weight: 650; }
@@ -214,7 +253,6 @@ input[type="text"] {
 input[type="text"]::placeholder { color: #66809b; }
 input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(45, 212, 191, .1); }
 
-.model-field { margin-top: 12px; }
 .model-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
 select {
   width: 100%;

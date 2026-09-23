@@ -6,3 +6,14 @@ APIs.txt
 # Sistema operacional
 .DS_Store
 Thumbs.db
+desktop.ini
+
+# Logs e arquivos locais
+log.txt
+*.log
+
+# Sincronizacao
+.megaignore
+Rubbish/
+undefined/
+

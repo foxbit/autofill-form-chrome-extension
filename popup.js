@@ -25,17 +25,19 @@ let serverDefaultModel = '';
 
 /**
  * Paginação do PDF do currículo — enviada ao Hermes em POST /cv.
- * O servidor injeta essas regras no CSS de impressão do template, para que a
- * quebra de página caia entre os blocos (cards de experiência, formação,
- * idiomas) em vez de cortá-los ao meio.
+ * Modo "pagina-unica": o HTML inteiro vai numa única página PDF, de largura
+ * fixa e altura igual ao conteúdo (sem quebras). `formato`/`quebrar_blocos`
+ * ficam só para um servidor antigo, que ignora `modo` e paginaria em Letter.
  */
 const CV_PAGINACAO = {
-  formato: 'Letter',            // 'Letter' | 'A4'
+  modo: 'pagina-unica',
+  largura: '8.5in',
+  altura: 'auto',               // o servidor mede o conteúdo renderizado
   margem_topo: '0.35in',
   margem_lateral: '0.4in',
   margem_rodape: '0.35in',
-  quebrar_blocos: true,         // false = corte livre (comportamento antigo)
-  evitar_quebra_em: []          // seletores extras que não podem ser partidos
+  formato: 'Letter',            // compatibilidade
+  quebrar_blocos: false         // compatibilidade: sem break-inside no modo paginado
 };
 
 // ─── feedback de atividade ──────────────────────────────
@@ -268,11 +270,11 @@ async function ensureContentScript(tabId) {
   return !!(topFrame && topFrame.success);
 }
 
-async function extractJobInfo(tabId) {
+async function extractJobInfo(tabId, payload = {}) {
   await ensureContentScript(tabId);
   // Só o frame principal: sem frameId a mensagem vai a todos os iframes da
   // aba e a primeira resposta vence — um iframe de anúncio "identificava" a vaga.
-  const res = await sendToTab(tabId, { type: 'EXTRACT_JOB_INFO' }, 0);
+  const res = await sendToTab(tabId, { type: 'EXTRACT_JOB_INFO', payload }, 0);
   if (res && res.success) return res;
   const tab = await chrome.tabs.get(tabId);
   addActivity(`Página sem resposta do script (${(res && res.error) || 'sem detalhe'}); usando o título da aba.`, 'error');
@@ -301,12 +303,65 @@ function buildVagaTexto(info) {
   return partes.join('\n\n').slice(0, 24000);
 }
 
+// ─── abas ───────────────────────────────────────────────
+// Operação (página em foco, ações, atividade) e Configurações (servidor,
+// modelo, botões na página). O status fica acima das abas, visível nas duas.
+const tabButtons = [...document.querySelectorAll('.tab')];
+const tabPanels = {
+  operacao: document.getElementById('tabOperacao'),
+  config: document.getElementById('tabConfig')
+};
+
+function selectTab(name, { persist = true } = {}) {
+  if (!tabPanels[name]) name = 'operacao';
+  tabButtons.forEach((btn) => {
+    const ativa = btn.dataset.tab === name;
+    btn.setAttribute('aria-selected', String(ativa));
+    btn.tabIndex = ativa ? 0 : -1;
+  });
+  Object.entries(tabPanels).forEach(([key, panel]) => { panel.hidden = key !== name; });
+  if (persist) chrome.storage.local.set({ panelTab: name }).catch(() => {});
+}
+
+tabButtons.forEach((btn) => btn.addEventListener('click', () => selectTab(btn.dataset.tab)));
+document.querySelector('.tabs').addEventListener('keydown', (event) => {
+  if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+  const atual = tabButtons.findIndex((btn) => btn.getAttribute('aria-selected') === 'true');
+  const passo = event.key === 'ArrowRight' ? 1 : -1;
+  const proxima = tabButtons[(atual + passo + tabButtons.length) % tabButtons.length];
+  proxima.focus();
+  selectTab(proxima.dataset.tab);
+});
+connectionBadgeEl.addEventListener('click', () => {
+  selectTab('config');
+  apiUrlInput.focus();
+});
+
 // ─── configurações ──────────────────────────────────────
 async function loadConfig() {
-  const { apiUrl, pageUiEnabled, aiModel } = await chrome.storage.local.get(['apiUrl', 'pageUiEnabled', 'aiModel']);
+  const { apiUrl, pageUiEnabled, aiModel, panelTab } = await chrome.storage.local.get(['apiUrl', 'pageUiEnabled', 'aiModel', 'panelTab']);
   apiUrlInput.value = apiUrl || 'http://127.0.0.1:8790';
   savedModel = aiModel || '';
   setPageUiLabel(pageUiEnabled !== false);
+  selectTab(panelTab || 'operacao', { persist: false });
+}
+
+/** Testa a API e reflete no selo do cabeçalho; com `announce`, também no status. */
+async function checkConnection({ announce = false } = {}) {
+  setConnectionState('idle', 'Testando API…');
+  const res = await sendToBackground({
+    type: 'TEST_CONNECTIONS',
+    payload: { apiUrl: apiUrlInput.value.trim() }
+  });
+  const ok = !!(res && res.success);
+  setConnectionState(ok ? 'success' : 'error', ok ? 'API conectada' : 'Falha na API');
+  if (announce) {
+    if (ok) setStatus('Conexão com o Hermes confirmada.', 'success');
+    else setStatus((res && res.error) || 'Não foi possível conectar ao Hermes. Verifique o endereço do servidor.', 'error');
+  } else {
+    addActivity(ok ? 'Servidor Hermes respondeu.' : `Servidor Hermes não respondeu: ${(res && res.error) || 'sem detalhe'}.`, ok ? 'success' : 'error');
+  }
+  return ok;
 }
 
 /** Reflete o estado do toggle no painel (o content script lê do storage). */
@@ -331,8 +386,8 @@ togglePageUiEl.addEventListener('change', async () => {
 
 apiUrlInput.addEventListener('change', async () => {
   await chrome.storage.local.set({ apiUrl: apiUrlInput.value.trim() });
-  setConnectionState('idle', 'API não testada');
   addActivity('Endereço do servidor Hermes atualizado.', 'info');
+  await checkConnection();
   loadModels();
 });
 
@@ -460,17 +515,7 @@ document.getElementById('btnRefreshPage').addEventListener('click', async (event
 
 document.getElementById('btnTest').addEventListener('click', (event) => runAction(event.currentTarget, async () => {
   setStatus('Testando a conexão com o servidor Hermes…', 'info');
-  const res = await sendToBackground({
-    type: 'TEST_CONNECTIONS',
-    payload: { apiUrl: apiUrlInput.value.trim() }
-  });
-  if (res && res.success) {
-    setConnectionState('success', 'API conectada');
-    setStatus('Conexão com o Hermes confirmada.', 'success');
-  } else {
-    setConnectionState('error', 'Falha na API');
-    setStatus((res && res.error) || 'Não foi possível conectar ao Hermes. Verifique o endereço do servidor.', 'error');
-  }
+  await checkConnection({ announce: true });
 }));
 
 document.getElementById('btnAutofill').addEventListener('click', (event) => runAction(event.currentTarget, async () => {
@@ -527,7 +572,7 @@ document.getElementById('btnAutofill').addEventListener('click', (event) => runA
 
   setStatus('Aplicando respostas nos campos encontrados…', 'info');
   const frameResponses = await Promise.all([...resultsByFrame.entries()].map(([frameId, results]) =>
-    sendToTab(tab.id, { type: 'AUTOFILL_FORM', payload: { results } }, frameId)
+    sendToTab(tab.id, { type: 'AUTOFILL_FORM', payload: { results, suggestions: fillRes.suggestions || [] } }, frameId)
   ));
   const filledCount = frameResponses.reduce((total, response) => total + (response && response.filledCount || 0), 0);
   const falhas = frameResponses.flatMap((response) => (response && response.failed) || []);
@@ -736,8 +781,13 @@ document.getElementById('btnCv').addEventListener('click', (event) => runAction(
   const tab = await refreshPageTarget();
   if (!tab) return setStatus('Nenhuma aba ativa foi encontrada.', 'error');
 
+  // Um CV por vez: o card do anterior sai antes de começar
+  resultEl.hidden = true;
+  lastCv = null;
+
   setStatus('Lendo os requisitos da vaga para gerar o currículo…', 'info');
-  const info = await extractJobInfo(tab.id);
+  // No LinkedIn a descrição carrega depois do resto da página; aqui vale esperar
+  const info = await extractJobInfo(tab.id, { aguardarDescricao: true });
   const vagaTexto = buildVagaTexto(info);
   const totalTexto = vagaTexto.length + (info.pagina || '').length;
   addActivity(
@@ -754,7 +804,8 @@ document.getElementById('btnCv').addEventListener('click', (event) => runAction(
     type: 'GENERATE_CV',
     payload: {
       vaga: vagaTexto,
-      idioma: 'pt',
+      // Dica de idioma (lang da página); quem decide é a detecção do servidor pela vaga
+      idioma: info.idioma || undefined,
       empresa: info.empresa,
       cargo: info.titulo,
       url: info.url,
@@ -765,23 +816,43 @@ document.getElementById('btnCv').addEventListener('click', (event) => runAction(
       paginacao: CV_PAGINACAO
     }
   });
-  if (res && res.success && res.data.pdf) {
-    const apiUrl = apiUrlInput.value.trim().replace(/\/$/, '');
-    const filename = res.data.pdf.split('/').pop();
-    const fileUrl = `${apiUrl}/cvs/${encodeURIComponent(filename)}`;
-    lastCv = { fileUrl, filename };
-    resultNameEl.textContent = filename;
-    resultEl.hidden = false;
-    setStatus('Currículo gerado e pronto para abrir ou baixar.', 'success');
-    try {
-      await chrome.downloads.download({ url: fileUrl, filename, saveAs: false });
-      addActivity('Download do currículo iniciado.', 'success');
-    } catch (downloadError) {
-      console.warn('Download automático falhou:', downloadError);
-      addActivity('Download automático indisponível; use o botão Baixar.', 'info');
-    }
-  } else {
+
+  const data = res && res.success ? res.data : null;
+  const filename = (res && res.filename) || (data && data.pdf ? String(data.pdf).split('/').pop() : '');
+  if (!data || !filename) {
     setStatus((res && res.error) || 'Não foi possível gerar o currículo.', 'error');
+    return;
+  }
+
+  // O background monta a URL com o mesmo apiUrl que usou na chamada
+  const { apiUrl: apiUrlSalvo } = await chrome.storage.local.get('apiUrl');
+  const base = (apiUrlSalvo || apiUrlInput.value.trim() || 'http://127.0.0.1:8790').replace(/\/$/, '');
+  const fileUrl = (res && res.download_url) || `${base}/cvs/${encodeURIComponent(filename)}`;
+  lastCv = { fileUrl, filename };
+  resultNameEl.textContent = filename;
+  resultEl.hidden = false;
+
+  // O que o servidor fez — fica no terminal e no log de auditoria
+  if (data.idioma) addActivity(`Idioma detectado pelo Hermes: ${data.idioma}.`, 'info');
+  if (data.modelo || typeof data.duracao_ms === 'number') {
+    const segundos = typeof data.duracao_ms === 'number' ? ` · ${Math.round(data.duracao_ms / 1000)} s` : '';
+    addActivity(`Modelo: ${data.modelo || 'padrão do servidor'}${segundos}.`, 'info');
+  }
+  if (Array.isArray(data.top_skills) && data.top_skills.length) {
+    addActivity(`Skills priorizadas: ${data.top_skills.slice(0, 8).join(', ')}.`, 'info');
+  }
+  if (typeof data.paginas === 'number') addActivity(`PDF com ${data.paginas} página${data.paginas === 1 ? '' : 's'}${data.tamanho_pagina ? ` (${data.tamanho_pagina})` : ''}.`, data.paginas === 1 ? 'success' : 'error');
+  auditLog('cv_resultado', {
+    filename, paginas: data.paginas, tamanho_pagina: data.tamanho_pagina, idioma: data.idioma,
+    reescrito: data.reescrito, fallback_motivo: data.fallback_motivo, modelo: data.modelo, duracao_ms: data.duracao_ms
+  });
+
+  if (data.reescrito === false) {
+    setStatus(`Currículo gerado SEM personalização por IA (motivo: ${data.fallback_motivo || 'não informado'}). Revise antes de enviar.`, 'error');
+  } else if (typeof data.paginas === 'number' && data.paginas !== 1) {
+    setStatus(`Currículo gerado com ${data.paginas} páginas — o pedido era página única. Abra e confira.`, 'error');
+  } else {
+    setStatus('Currículo gerado. Use Abrir para conferir e Baixar para salvar.', 'success');
   }
 }));
 
@@ -838,6 +909,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
 
 async function initialize() {
   await loadConfig();
+  checkConnection();
   loadModels();
   await refreshPageTarget();
   addActivity('Painel pronto. Escolha uma ação para iniciar.', 'info');

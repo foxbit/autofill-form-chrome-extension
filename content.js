@@ -388,6 +388,8 @@ function extractJobPosting() {
     job_id: jobId,
     plataforma,
     variante,
+    // Idioma da interface da página — só uma dica; o Hermes detecta pela vaga
+    idioma: (document.documentElement.lang || '').slice(0, 2).toLowerCase(),
     observacoes: (resumo || descricao).slice(0, 300),
     descricao,
     requisitos,
@@ -434,8 +436,11 @@ function auditLog(evento, dados = {}) {
 
 const LINKEDIN_HOST = /(^|\.)linkedin\.com$/i;
 
+// Chips de filtro/ação da página de vaga: nunca são o título
+const LINKEDIN_CHIP = /^(remote|remoto|hybrid|h[íi]brido|on-?site|presencial|full-?time|tempo integral|part-?time|meio per[íi]odo|contract|contrato|internship|est[áa]gio|temporary|tempor[áa]rio|easy apply|candidatura simplificada|save|salvar|saved|salvo|apply|candidatar-?se|show match details|ver detalhes)/i;
+
 // Linhas de card que não são localização (data, candidatos, selos)
-const LINKEDIN_LINHA_EXTRA = /^(posted|publicad|há \d|\d+\s*(h|d|w|mo|y|min)\b|.*\bago$|.*applicant|.*candidat|easy apply|candidatura simplificada|promoted|promovid|·|be an early|.*alumni|.*ex-alun|viewed|visualizad|verified|verificad)/i;
+const LINKEDIN_LINHA_EXTRA =/^(posted|publicad|há \d|\d+\s*(h|d|w|mo|y|min)\b|.*\bago$|.*applicant|.*candidat|easy apply|candidatura simplificada|promoted|promovid|·|be an early|.*alumni|.*ex-alun|viewed|visualizad|verified|verificad)/i;
 
 function isLinkedIn() {
   return LINKEDIN_HOST.test(location.hostname);
@@ -569,26 +574,50 @@ function linkedInFocusedJob() {
     local = linkedInText('.topcard__flavor--bullet');
     descricao = linkedInText('.description__text, .show-more-less-html__markup');
   } else {
-    // Interface nova: empresa em aria-label; título no link canônico da vaga
-    // ou na linha seguinte à empresa no bloco do topo
+    // Interface nova: empresa em aria-label; título na linha seguinte à empresa
+    // no bloco do topo (empresa, cargo, "Local · há X · N candidatos")
     const empresaEl = [...document.querySelectorAll('[aria-label^="Company, " i], [aria-label^="Empresa, " i]')].find(foraDeCard);
     empresa = linkedInCompanyFromAria(empresaEl && empresaEl.getAttribute('aria-label'));
-    const link = [...document.querySelectorAll('a[href*="/jobs/view/"]')]
-      .find((a) => foraDeCard(a) && linkedInIdFromUrl(a.href) === job_id);
-    titulo = link ? linkedInLines(link)[0] || '' : '';
 
     let bloco = empresaEl;
     while (bloco && bloco !== document.body && linkedInLines(bloco).length < 3) bloco = bloco.parentElement;
-    const linhas = bloco && bloco !== document.body && linkedInLines(bloco).length <= 40 ? linkedInLines(bloco) : [];
-    if (!titulo && empresa) titulo = linhas[linhas.indexOf(empresa) + 1] || '';
-    const meta = linhas.find((l) => /\S\s*·\s*\S/.test(l) && !/^(promoted|promovid)/i.test(l));
+    let linhas = bloco && bloco !== document.body ? linkedInLines(bloco) : [];
+    if (linhas.length > 60) linhas = [];   // subiu até a coluna inteira: não dá para confiar
+    const depoisDaEmpresa = empresa ? linhas[linhas.indexOf(empresa) + 1] || '' : '';
+    if (depoisDaEmpresa && !LINKEDIN_CHIP.test(depoisDaEmpresa)) titulo = depoisDaEmpresa;
+
+    // Segunda opção: o link da própria vaga (/jobs/view/<id>). Só pelo caminho —
+    // os chips "Remoto"/"Full-time" apontam para a busca com ?currentJobId=<id>
+    // e já gravaram vagas com título "Remoto".
+    if (!titulo) {
+      const link = [...document.querySelectorAll('a[href*="/jobs/view/"]')].find((a) => {
+        if (!foraDeCard(a)) return false;
+        let caminho = '';
+        try { caminho = new URL(a.href, location.href).pathname; } catch (err) { return false; }
+        const m = caminho.match(/\/jobs\/view\/(?:[^/?#]*-)?(\d{6,})(?=[/?#]|$)/);
+        const texto = linkedInLines(a)[0] || '';
+        return !!m && m[1] === job_id && texto && !LINKEDIN_CHIP.test(texto);
+      });
+      titulo = link ? linkedInLines(link)[0] || '' : '';
+    }
+
+    // Local: primeiro segmento da linha "Local · há X dias · N candidatos"
+    const ehMeta = (l) => /\S\s*·\s*\S/.test(l) && !/^(promoted|promovid)/i.test(l);
+    const meta = linhas.find(ehMeta) ||
+      linkedInLines(document.body).find((l) => ehMeta(l) && /·\s*(\d|há |hace |[a-z]+ ago|reposted|republicad|just now|agora)/i.test(l));
     local = meta ? linkedInFirstSegment(meta) : '';
 
+    // Descrição: a seção do h2 "About the job" (chega depois do resto da página)
     const h2 = [...document.querySelectorAll('h2')].find((h) => /about the job|sobre a vaga/i.test(h.textContent));
     if (h2) {
       let secao = h2.parentElement;
-      while (secao && secao !== document.body && normalizeJobText(secao.innerText).length < 400) secao = secao.parentElement;
-      if (secao && secao !== document.body) descricao = normalizeJobText(secao.innerText);
+      while (secao && secao !== document.body &&
+        normalizeJobText(secao.innerText).length < 400 && secao.querySelectorAll('h2').length <= 1) {
+        secao = secao.parentElement;
+      }
+      if (secao && secao !== document.body && normalizeJobText(secao.innerText).length >= 400) {
+        descricao = normalizeJobText(secao.innerText);
+      }
     }
   }
 
@@ -638,9 +667,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
 
         case 'AUTOFILL_FORM': {
-          const { results } = message.payload;
+          const { results, suggestions = [] } = message.payload;
           const applied = [];
           const failed = [];
+
+          // Salva as sugestões de IA para os botões ⚡ correspondentes
+          if (Array.isArray(suggestions) && suggestions.length) {
+            for (const s of suggestions) {
+              const targetField = parsedFields.find(f => f.id === s.fieldId) ||
+                parsedFields.find(f => window.formFiller.normalize(f.question) === window.formFiller.normalize(s.question));
+              if (targetField) {
+                saveGeneratedAnswer(targetField, s.value, '');
+              }
+            }
+          }
 
           // Fill sequentially to respect visual flow and prevent SPA lag
           for (const result of results) {
@@ -727,11 +767,23 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
 
         case 'EXTRACT_JOB_INFO': {
-          const info = extractJobPosting();
+          const aguardar = !!(message.payload && message.payload.aguardarDescricao);
+          const inicio = Date.now();
+          let info = extractJobPosting();
+          let tentativas = 1;
+          // Interface nova do LinkedIn: "About the job" chega depois do resto da
+          // página. Quem pediu (Gerar CV) aceita esperar até ~2,5 s por ela.
+          while (aguardar && isLinkedIn() && info.job_id &&
+            !['linkedin', 'json-ld'].includes(info.fonte) && tentativas < 6) {
+            await new Promise((resolve) => setTimeout(resolve, 500));
+            info = extractJobPosting();
+            tentativas += 1;
+          }
           auditLog('extract_job_info', {
             titulo: info.titulo, empresa: info.empresa, local: info.local, job_id: info.job_id,
-            plataforma: info.plataforma, variante: info.variante, fonte: info.fonte,
-            descricao: info.descricao.length, urlCanonica: info.url
+            plataforma: info.plataforma, variante: info.variante, fonte: info.fonte, idioma: info.idioma,
+            descricao: info.descricao.length, urlCanonica: info.url,
+            tentativas, esperou_ms: Date.now() - inicio
           });
           sendResponse({ success: true, ...info });
           break;
@@ -1104,21 +1156,65 @@ function generatedAnswerKey(field) {
   return `${GENERATED_ANSWER_PREFIX}${location.origin}${location.pathname}::${pergunta}`;
 }
 
+function globalAnswerKey(field) {
+  const pergunta = window.formFiller.normalize(field.question);
+  return `${GENERATED_ANSWER_PREFIX}global::${pergunta}`;
+}
+
 async function loadGeneratedAnswer(field) {
   try {
     const key = generatedAnswerKey(field);
-    const data = await chrome.storage.local.get(key);
-    return data[key] || null;
+    const gKey = globalAnswerKey(field);
+    const data = await chrome.storage.local.get([key, gKey]);
+    if (data[key] && data[key].resposta) return data[key];
+    if (data[gKey] && data[gKey].resposta) return data[gKey];
+
+    // Se não houver no storage local, consulta o banco de perguntas do Hermes
+    try {
+      const hermesRes = await new Promise((resolve) => {
+        chrome.runtime.sendMessage(
+          { type: 'CHECK_QUESTION', payload: { question: field.question } },
+          resolve
+        );
+      });
+      if (hermesRes && hermesRes.success && hermesRes.exists && hermesRes.existingAnswer) {
+        return {
+          resposta: hermesRes.existingAnswer,
+          instrucao: '',
+          source: 'banco',
+          updatedAt: Date.now()
+        };
+      }
+    } catch (e) {
+      /* ignora erro de comunicação */
+    }
+
+    // Se o campo já contiver texto na página, utiliza como ponto de partida
+    const currentVal = getFieldCurrentValue(field);
+    if (currentVal) {
+      return {
+        resposta: currentVal,
+        instrucao: '',
+        source: 'campo',
+        updatedAt: null
+      };
+    }
+
+    return null;
   } catch (err) {
     console.warn('[Autofill IA] Não foi possível ler a resposta gerada salva:', err);
     return null;
   }
 }
 
-async function saveGeneratedAnswer(field, resposta, instrucao) {
+async function saveGeneratedAnswer(field, resposta, instrucao = '') {
   try {
+    const key = generatedAnswerKey(field);
+    const gKey = globalAnswerKey(field);
+    const payload = { resposta, instrucao, updatedAt: Date.now() };
     await chrome.storage.local.set({
-      [generatedAnswerKey(field)]: { resposta, instrucao, updatedAt: Date.now() }
+      [key]: payload,
+      [gKey]: payload
     });
     await pruneGeneratedAnswers();
   } catch (err) {
@@ -1143,11 +1239,24 @@ async function pruneGeneratedAnswers() {
  * Nesse caso reencontra o campo pela pergunta numa varredura nova.
  */
 function resolveLiveField(field) {
-  if (window.domParser.getElement(field.elementIds[0])) return field;
+  const directEl = field.elementIds && field.elementIds[0]
+    ? window.domParser.getElement(field.elementIds[0])
+    : null;
+  if (directEl && directEl.isConnected) return field;
+
   const current = window.domParser.parseForm();
-  return current.find(f => f.id === field.id) ||
-    current.find(f => f.type === field.type && f.question === field.question) ||
+  const normalizedTargetQuestion = window.formFiller.normalize(field.question);
+
+  const found = current.find(f => f.id === field.id) ||
+    current.find(f => window.formFiller.normalize(f.question) === normalizedTargetQuestion && f.type === field.type) ||
+    current.find(f => window.formFiller.normalize(f.question) === normalizedTargetQuestion) ||
     null;
+
+  if (found) {
+    field.elementIds = found.elementIds;
+    return found;
+  }
+  return null;
 }
 
 async function handleGenerateClick(field) {
@@ -1204,7 +1313,7 @@ function showGenerateModal(field, salva) {
     applyBtn.disabled = value;
   };
 
-  const showAnswer = (resposta, savedAt) => {
+  const showAnswer = (resposta, savedAt, source) => {
     answerEl.value = resposta;
     resultEl.hidden = false;
     applyBtn.hidden = false;
@@ -1212,14 +1321,18 @@ function showGenerateModal(field, salva) {
     generateBtn.classList.replace('autofill-modal-btn-confirm', 'autofill-modal-btn-secondary');
 
     const avisos = [];
-    if (savedAt) {
+    if (source === 'banco') {
+      avisos.push('Resposta cadastrada no banco de perguntas do Hermes.');
+    } else if (source === 'campo') {
+      avisos.push('Texto atual presente no campo.');
+    } else if (savedAt) {
       const quando = new Date(savedAt).toLocaleString('pt-BR', {
         day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'
       });
       avisos.push(`Resposta gerada em ${quando}.`);
     }
     if (['text', 'textarea', 'combobox'].includes(field.type) && !isFieldEmpty(field)) {
-      avisos.push('O campo já tem texto; ao aprovar, ele será substituído.');
+      avisos.push('Ao aprovar, o campo será preenchido/substituído.');
     }
     hintEl.textContent = avisos.join(' ');
     hintEl.hidden = !avisos.length;
@@ -1227,7 +1340,7 @@ function showGenerateModal(field, salva) {
 
   if (salva && salva.resposta) {
     instrucaoEl.value = salva.instrucao || '';
-    showAnswer(salva.resposta, salva.updatedAt);
+    showAnswer(salva.resposta, salva.updatedAt, salva.source);
   }
 
   const close = () => {
@@ -1281,7 +1394,7 @@ function showGenerateModal(field, salva) {
     }
 
     savedAnswer = resposta;
-    showAnswer(resposta);
+    showAnswer(resposta, Date.now(), 'ia');
     await saveGeneratedAnswer(field, resposta, instrucao);
   });
 
@@ -1296,11 +1409,12 @@ function showGenerateModal(field, salva) {
 
     setBusy(true);
     const alvo = resolveLiveField(field);
+    close();
+
     // A pessoa aprovou esta resposta para este campo: substitui o que houver nele
     const outcome = alvo
       ? await window.formFiller.fill(alvo, resposta, { overwrite: true })
       : { ok: false, reason: 'campo não está mais na página' };
-    setBusy(false);
 
     if (!outcome || !outcome.ok) {
       console.warn(`[Autofill IA] Não preencheu "${field.question}":`, outcome);
@@ -1308,7 +1422,6 @@ function showGenerateModal(field, salva) {
       return;
     }
 
-    close();
     showToast('Resposta preenchida.', 'success');
   });
 }
