@@ -15,7 +15,7 @@ content.js (formulário) ──► background.js (service worker) ──► Herm
                                                                     cofre-pessoal/vagas/ (fonte única)
 ```
 
-- **`utils/hermes-client.js`** — cliente HTTP para a API (`/health`, `/profile`, `/fill`, `/learn`, `/qa`, `/capture`, `/cv`).
+- **`utils/hermes-client.js`** — cliente HTTP para a API (`/health`, `/profile`, `/fill`, `/learn`, `/qa`, `/capture`).
 - **`utils/dom-parser.js`** — descoberta de campos (labels, aria, placeholders, heurísticas Gupy/Workday).
 - **`utils/form-filler.js`** — preenchimento com simulação de digitação (SPAs).
 - **`background.js`** — orquestra as mensagens e chama a API.
@@ -26,8 +26,8 @@ content.js (formulário) ──► background.js (service worker) ──► Herm
 | Ação | Fluxo |
 |---|---|
 | **Autopreencher** | reanalisa a aba ativa e seus modais/iframes → `POST /fill` (perfil + QA histórico) → preenche os campos |
+| **Mapear campos** | reanalisa a aba ativa e seus modais/iframes → `POST /fill` + escolha de opção quando necessário → mostra os campos e respostas mapeadas para copiar; **não preenche nem altera os inputs** |
 | **Capturar vaga** | extrai título/empresa/descrição da página → `POST /capture` → Banco de Vagas |
-| **Gerar CV** | extrai o texto da vaga → `POST /cv` (template + Chrome headless) → PDF personalizado numa única página; Abrir mostra numa aba, Baixar pergunta onde salvar |
 | **Aprender** | ícone ☁️ por campo: salva correção → `POST /learn` (refina o QA no cofre) |
 
 ### O que a extensão envia da vaga
@@ -45,26 +45,7 @@ pesam mais no ranking do Hermes.
 | `titulo` / `empresa` / `local` | JSON-LD, `og:*` ou `<title>` (ignora o nome do ATS) | — |
 
 Os seletores de ATS (Gupy, Greenhouse, Lever, Ashby, Workday, LinkedIn, Indeed…) só servem para
-**destacar** o trecho principal; num site desconhecido a extração cai no corpo da página e o CV
-continua sendo personalizado.
-
-### Página única do CV
-
-O `POST /cv` leva o objeto `paginacao` definido em `popup.js` (`CV_PAGINACAO`). No modo
-`pagina-unica` o Hermes renderiza o HTML inteiro numa **única página PDF**: largura fixa e altura
-igual ao conteúdo, sem quebras de página — o arquivo é feito para envio digital, não para impressão.
-
-| Campo | Padrão | Descrição |
-|---|---|---|
-| `modo` | `pagina-unica` | `paginada` volta ao CSS de impressão com quebras entre blocos |
-| `largura` | `8.5in` | largura da página |
-| `altura` | `auto` | o servidor mede o conteúdo renderizado |
-| `margem_topo` / `margem_lateral` / `margem_rodape` | `0.35in` / `0.4in` / `0.35in` | margens |
-| `formato` / `quebrar_blocos` | `Letter` / `false` | só para um servidor antigo, que ignora `modo` |
-
-A resposta traz `paginas`, `idioma` detectado, `reescrito` (se a IA personalizou) e `top_skills`;
-o painel avisa quando o PDF não saiu com uma página ou quando o CV saiu sem personalização.
-
+**destacar** o trecho principal; num site desconhecido a extração cai no corpo da página.
 ## Configuração
 
 1. `chrome://extensions` → **Modo do desenvolvedor** → **Carregar sem compactação** → esta pasta.

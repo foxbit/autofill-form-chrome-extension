@@ -130,11 +130,6 @@ export class HermesClient {
     return await this._get('/vagas');
   }
 
-  /** Gera currículo personalizado em PDF (POST /cv). */
-  async generateCv(payload) {
-    return await this._post('/cv', this._comModelo(payload));
-  }
-
   /**
    * Baixa um arquivo fixo do cofre (GET /arquivos/{tipo}) já em base64, porque
    * é assim que ele atravessa o canal de mensagens até o content script.

@@ -772,7 +772,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           let info = extractJobPosting();
           let tentativas = 1;
           // Interface nova do LinkedIn: "About the job" chega depois do resto da
-          // página. Quem pediu (Gerar CV) aceita esperar até ~2,5 s por ela.
+          // página. Quem pede a descrição com espera aceita aguardar até ~2,5 s por ela.
           while (aguardar && isLinkedIn() && info.job_id &&
             !['linkedin', 'json-ld'].includes(info.fonte) && tentativas < 6) {
             await new Promise((resolve) => setTimeout(resolve, 500));

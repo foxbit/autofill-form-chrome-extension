@@ -38,7 +38,7 @@ para autopreencher formulários de candidatura, capturar vagas e gerar currícul
 | `background.js` | Service worker: roteamento de mensagens, orquestração API | Claude |
 | `content.js` | Injeção no DOM, scan de formulários, botões inline, modais | Claude |
 | `popup.html/js/css` | Side panel UI em duas abas — Operação (página em foco, ações, resultados, atividade) e Configurações (servidor, modelo, botões na página); status acima das abas; aba lembrada em `panelTab` | Claude |
-| `utils/hermes-client.js` | Cliente HTTP para a API (`/health`, `/fill`, `/learn`, `/generate`, `/capture`, `/cv`) | Claude |
+| `utils/hermes-client.js` | Cliente HTTP para a API (`/health`, `/fill`, `/learn`, `/generate`, `/capture`) | Claude |
 | `utils/dom-parser.js` | Descoberta de campos (labels, aria, placeholders, heurísticas) | Claude |
 | `utils/form-filler.js` | Preenchimento com simulação de digitação (SPAs) | Claude |
 | `utils/storage-manager.js` | Chrome storage (apiUrl, idioma, aiModel) | Claude |
@@ -111,11 +111,9 @@ para autopreencher formulários de candidatura, capturar vagas e gerar currícul
 | POST/DELETE | `/modelos/ativo` | Modelo ativo no servidor (`modelo`); o painel grava ao salvar. Vale também para cron/CLI |
 | POST | `/capture` | Registra vaga no banco (`titulo`, `empresa`, `local`, `url`, `origem[]`). Devolve `{ok, duplicada, arquivo, banco_total}`: se a vaga já existe, `duplicada: true` e nada é regravado (lock compartilhado com o cron). `job_id` e `observacoes` são aceitos mas ignorados: o id sai da `url` (`/jobs/view/{id}/`); fora do LinkedIn, mandar a URL com query (o servidor tira fragmento e `utm_*`/`gclid` e ordena os parâmetros) |
 | GET | `/vagas` | Banco de vagas: `{total, vagas[]}` com `job_id`, `url`, `status`, `origem`, `arquivo`. Filtros: `status`, `job_id`, `url` |
-| POST | `/cv` | Gera currículo PDF personalizado (usa IA; `modelo?`). Corpo: `vaga`, `descricao`, `requisitos`, `skills[]`, `pagina`, `cargo`, `empresa`, `url`, `idioma` (só dica — o servidor detecta pela vaga), `paginacao` com `modo: "pagina-unica"` (HTML inteiro numa página, altura = conteúdo). Resposta: `ok`, `pdf` (caminho absoluto), `html`, `idioma`, `reescrito` (false = saiu sem IA), `top_skills`, e — contrato novo — `paginas`, `filename`, `modelo`, `duracao_ms`, `fallback_motivo`, `tamanho_pagina` |
-| GET | `/cvs/{filename}` | Download de CV gerado |
 
 ### Modelo de IA
-- Rotas que chamam o LLM: `/generate`, `/fill-match` e `/cv`. As demais (`/fill`, `/capture`, `/learn`, `/qa`…) não usam IA.
+- Rotas que chamam o LLM: `/generate` e `/fill-match`. As demais (`/fill`, `/capture`, `/learn`, `/qa`…) não usam IA.
 - `modelo` é opcional (string|null). Vazio = modelo `efetivo` do servidor. Id fora do catálogo = **422**
   (`modelo desconhecido: X`). Com o catálogo indisponível (`modelos: []`) a validação fica permissiva.
 - Precedência no servidor: `modelo` do corpo > ativo no servidor > `OPENCODE_MODEL` > fallback do código.
@@ -156,7 +154,7 @@ loadModels → GET_MODELS (background) → GET /modelos → seletor
 Salvar → chrome.storage.local.aiModel  (extensão)
        → SET_ACTIVE_MODEL → POST /modelos/ativo (servidor; vazio = DELETE)
 getClient() lê aiModel a cada mensagem → HermesClient._comModelo() acrescenta
-`modelo` em /generate, /fill-match e /cv
+`modelo` em /generate e /fill-match
 ```
 - Salvar grava nos dois lugares: no storage (o que a extensão envia) e no servidor
   (o que a automação sem request usa). Se o servidor recusar, a extensão mantém a
@@ -183,27 +181,12 @@ background → GET /vagas (dedup por job_id ou url) → POST /capture só nas no
   A lista cobre só a página de resultados atual (25 cards), sem paginação.
   Na interface nova a descrição ("About the job") carrega de forma preguiçosa e pode vir vazia.
 
-### Gerar CV
-```
-EXTRACT_JOB_INFO { aguardarDescricao: true } → dados da vaga (espera a descrição no LinkedIn)
-→ GENERATE_CV (background) → API /cv (paginacao.modo = "pagina-unica") → PDF
-→ painel: card com Abrir (aba) e Baixar (pergunta onde salvar) — sem download automático
-```
-- O texto da vaga vai inteiro (`buildVagaTexto`, até 24k) mais `pagina` (texto integral, até 60k);
-  é o cvgen que ranqueia skills/bullets — a extensão não manda instruções de conteúdo nem `highlight`.
-- A extensão não escolhe idioma: manda o `lang` da página como dica; a heurística do servidor sobre a
-  vaga decide. Avisos no painel: `reescrito: false` (CV sem IA, com `fallback_motivo`) e
-  `paginas ≠ 1` (o pedido era página única). `generate_cv` e `cv_resultado` vão para o log de auditoria.
-- No servidor, cada geração grava `04_registro-acompanhamento/cvs/AAAA-MM-DD-empresa-cargo.{pdf,html}`
-  (mesmo dia + empresa + cargo sobrescreve) e acrescenta em `candidaturas.json`. `GET /cvs` lista;
-  `GET /cvs/{filename}` baixa.
-
 ## Conexão com o Ecossistema Hermes
 
 Esta extensão é um componente da **Máquina de Vagas**, que inclui:
 - **API FastAPI** (porta 8790) — backend que serve dados do cofre
 - **Cofre Pessoal** (`~/mega/Obsidian-cofres/cofre-pessoal/vagas/`) — fonte única de dados
-- **Hermes Agent** — orquestra coleta de vagas, geração de CV, aprendizado
+- **Hermes Agent** — orquestra coleta de vagas e aprendizado
 
 **IMPORTANTE**: Alterações na API (`hermes-client.js`) devem ser validadas contra os endpoints reais.
 Se um endpoint mudar, o `CLAUDE.md` deve ser atualizado.

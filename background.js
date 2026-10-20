@@ -151,6 +151,49 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           break;
         }
 
+        case 'MAP_FIELDS': {
+          const { fields, contexto = '' } = message.payload || {};
+          const client = await getClient();
+          const apiFields = (fields || []).map((f) => ({
+            id: f.id,
+            label: f.question || f.name || '',
+            type: f.type,
+            options: (f.options || []).map((o) => o.label).filter(Boolean),
+            required: !!f.required,
+            multiple: !!f.multiple,
+            standalone: !!f.standalone,
+            accept: f.accept || ''
+          }));
+
+          // Somente resolve correspondências. Não baixa arquivos, não gera respostas
+          // abertas e, principalmente, não envia AUTOFILL_FORM para a página.
+          const res = await client.fill(apiFields);
+          const results = (res.filled || []).map((f) => ({
+            fieldId: f.id, type: f.type, value: f.value, source: f.source
+          }));
+          let unmatched = res.unmatched || [];
+          const comOpcoes = unmatched.filter((u) =>
+            (u.options || []).length && u.reason !== 'campo sensível — responder manualmente'
+          );
+          const debugLogs = [];
+          if (comOpcoes.length) {
+            try {
+              const match = await client.fillMatch(comOpcoes, contexto);
+              for (const f of match.filled || []) {
+                results.push({ fieldId: f.id, type: f.type, value: f.value, source: f.source });
+              }
+              const resolvidos = new Set((match.filled || []).map((f) => f.id));
+              unmatched = unmatched.filter((u) => !resolvidos.has(u.id));
+              if (resolvidos.size) debugLogs.push(`IA mapeou opção em ${resolvidos.size} campo(s).`);
+            } catch (e) {
+              debugLogs.push(`[fill-match] ${e.message}`);
+            }
+          }
+          debugLogs.unshift(`Mapeamento: ${results.length} campo(s) com resposta, ${unmatched.length} sem correspondência.`);
+          sendResponse({ success: true, results, unmatched, debugLogs });
+          break;
+        }
+
         case 'AUTOFILL_FIELDS': {
           const { fields, contexto = '', idioma = 'pt' } = message.payload;
           const client = await getClient();
@@ -323,34 +366,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             itens: lote.itens.map((i) => ({ job_id: i.job_id, estado: i.estado, motivo: i.motivo }))
           });
           sendResponse({ success: true, ...lote });
-          break;
-        }
-
-        case 'GENERATE_CV': {
-          const client = await getClient();
-          const payload = message.payload || {};
-          const inicio = Date.now();
-          const data = await client.generateCv(payload);
-          // O servidor devolve `pdf` como caminho absoluto; o painel só precisa do nome
-          const filename = String((data && (data.filename || data.pdf)) || '').split('/').pop();
-          const tamanho = (texto) => String(texto || '').length;
-          auditLog('generate_cv', {
-            cargo: payload.cargo, empresa: payload.empresa, url: payload.url,
-            modo: payload.paginacao && payload.paginacao.modo, idiomaDica: payload.idioma || '',
-            chars: { vaga: tamanho(payload.vaga), descricao: tamanho(payload.descricao), requisitos: tamanho(payload.requisitos), pagina: tamanho(payload.pagina) },
-            skills: (payload.skills || []).length, modelo_enviado: client.modelo || '', ms: Date.now() - inicio,
-            resposta: data ? {
-              ok: data.ok, paginas: data.paginas, tamanho_pagina: data.tamanho_pagina, idioma: data.idioma,
-              reescrito: data.reescrito, fallback_motivo: data.fallback_motivo, modelo: data.modelo,
-              duracao_ms: data.duracao_ms, pdf: filename, top_skills: (data.top_skills || []).slice(0, 8)
-            } : null
-          });
-          sendResponse({
-            success: true,
-            data,
-            filename,
-            download_url: filename ? `${client.apiUrl}/cvs/${encodeURIComponent(filename)}` : ''
-          });
           break;
         }
 

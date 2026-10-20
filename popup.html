@@ -76,6 +76,14 @@
           </span>
           <span class="button-label">Autopreencher formulário</span>
         </button>
+        <button id="btnMapFields" class="btn btn-secondary" type="button" data-action data-loading-label="Mapeando campos…">
+          <span class="button-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="3.5" y="4" width="17" height="16" rx="2"/><path d="M8 4v16M12 8h5M12 12h5M12 16h3"/>
+            </svg>
+          </span>
+          <span class="button-label">Mapear campos</span>
+        </button>
 
         <div class="secondary-actions">
           <button id="btnCapture" class="btn btn-secondary" type="button" data-action data-loading-label="Capturando vaga…">
@@ -86,26 +94,17 @@
             </span>
             <span class="button-label">Capturar vaga</span>
           </button>
-          <button id="btnCv" class="btn btn-secondary" type="button" data-action data-loading-label="Gerando CV…">
-            <span class="button-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M7 3.5h7l3 3V20.5H7z"/>
-                <path d="M14 3.5v4h4M10 12h4M10 16h4"/>
-              </svg>
-            </span>
-            <span class="button-label">Gerar CV</span>
-          </button>
         </div>
       </section>
 
-      <div id="result" class="result" hidden>
-        <div class="result-title">Currículo gerado</div>
-        <div id="resultName" class="result-name"></div>
-        <div class="result-actions">
-          <button id="btnOpenCv" class="btn btn-secondary btn-small" type="button">Abrir</button>
-          <button id="btnDownloadCv" class="btn btn-secondary btn-small" type="button">Baixar</button>
+      <section id="mappingCard" class="result mapping-card" hidden aria-labelledby="mappingTitle">
+        <div class="section-header">
+          <p id="mappingTitle" class="result-title">Mapeamento dos campos</p>
+          <span id="mappingCount" class="mapping-count"></span>
         </div>
-      </div>
+        <p id="mappingHint" class="result-name">O mapeamento não altera os campos da página.</p>
+        <div id="mappingList" class="mapping-list" aria-live="polite"></div>
+      </section>
 
       <section id="batchCard" class="result batch-card" hidden aria-labelledby="batchTitle">
         <div class="section-header">
@@ -177,7 +176,7 @@
           <button id="btnSaveModel" class="btn btn-secondary btn-save" type="button" disabled>Salvar</button>
         </div>
         <p id="modelHint" class="field-hint" data-tone="info">Carregando modelos…</p>
-        <p class="field-hint">Usado nas respostas geradas (⚡), na escolha de opções e no CV — aqui e nas rotinas do servidor.</p>
+        <p class="field-hint">Usado nas respostas geradas (⚡) e na escolha de opções, aqui e nas rotinas do servidor.</p>
       </section>
 
       <section class="settings-card" aria-labelledby="pageUiLabel">

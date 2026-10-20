@@ -337,6 +337,19 @@ select option { color: var(--ink); background: var(--surface); }
 .status-error { border-left-color: var(--danger); color: #ffe2e6; background: var(--danger-bg); }
 
 .result { padding: 12px; }
+.mapping-card .section-header { margin-bottom: 4px; }
+.mapping-count { color: var(--primary); font-size: 11px; font-weight: 700; white-space: nowrap; }
+.mapping-card .result-name { margin-bottom: 8px; }
+.mapping-list { display: grid; gap: 7px; max-height: 340px; overflow-y: auto; }
+.mapping-row { display: grid; gap: 5px; padding: 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--terminal); }
+.mapping-row-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+.mapping-question { color: var(--ink); font-size: 12px; font-weight: 650; overflow-wrap: anywhere; }
+.mapping-meta { color: var(--muted); font-size: 10px; white-space: nowrap; }
+.mapping-state { color: var(--success); font-size: 10px; font-weight: 700; }
+.mapping-state[data-state="unmatched"] { color: var(--muted); }
+.mapping-answer { width: 100%; min-height: 42px; max-height: 110px; resize: vertical; border: 1px solid var(--line); border-radius: 6px; padding: 7px; color: var(--muted-strong); background: #0b1625; font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.mapping-options { color: var(--muted); font-size: 10px; line-height: 1.4; overflow-wrap: anywhere; }
+.mapping-note { color: var(--muted); font-size: 10px; }
 .result-title { color: var(--success); font-size: 12px; font-weight: 700; }
 .result-name { color: var(--muted-strong); font-size: 12px; overflow-wrap: anywhere; margin: 3px 0 10px; }
 .result-actions { display: flex; gap: 8px; }

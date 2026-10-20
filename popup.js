@@ -5,8 +5,6 @@
 
 const apiUrlInput = document.getElementById('apiUrl');
 const statusEl = document.getElementById('status');
-const resultEl = document.getElementById('result');
-const resultNameEl = document.getElementById('resultName');
 const pageTitleEl = document.getElementById('pageTitle');
 const pageHostEl = document.getElementById('pageHost');
 const targetCardEl = document.getElementById('targetCard');
@@ -18,27 +16,9 @@ const terminalStateEl = document.getElementById('terminalState');
 const aiModelSelect = document.getElementById('aiModel');
 const btnSaveModel = document.getElementById('btnSaveModel');
 const modelHintEl = document.getElementById('modelHint');
-let lastCv = null;
 // Modelo gravado no storage (vazio = padrão do servidor) e o padrão que o servidor informa
 let savedModel = '';
 let serverDefaultModel = '';
-
-/**
- * Paginação do PDF do currículo — enviada ao Hermes em POST /cv.
- * Modo "pagina-unica": o HTML inteiro vai numa única página PDF, de largura
- * fixa e altura igual ao conteúdo (sem quebras). `formato`/`quebrar_blocos`
- * ficam só para um servidor antigo, que ignora `modo` e paginaria em Letter.
- */
-const CV_PAGINACAO = {
-  modo: 'pagina-unica',
-  largura: '8.5in',
-  altura: 'auto',               // o servidor mede o conteúdo renderizado
-  margem_topo: '0.35in',
-  margem_lateral: '0.4in',
-  margem_rodape: '0.35in',
-  formato: 'Letter',            // compatibilidade
-  quebrar_blocos: false         // compatibilidade: sem break-inside no modo paginado
-};
 
 // ─── feedback de atividade ──────────────────────────────
 function formatTime(date = new Date()) {
@@ -285,24 +265,6 @@ async function extractJobInfo(tabId, payload = {}) {
   };
 }
 
-/**
- * Texto da vaga enviado ao Hermes em POST /cv — é ele que o cvgen usa para
- * ranquear skills e bullets, então vai a descrição inteira, não só o resumo.
- */
-function buildVagaTexto(info) {
-  const partes = [
-    info.titulo && `Cargo: ${info.titulo}`,
-    info.empresa && `Empresa: ${info.empresa}`,
-    info.local && `Local: ${info.local}`,
-    info.url && `URL: ${info.url}`,
-    info.skills && info.skills.length && `Skills exigidas: ${info.skills.join(', ')}`,
-    info.requisitos && `Requisitos e responsabilidades:\n${info.requisitos}`,
-    info.descricao && `Descrição da vaga:\n${info.descricao}`,
-    !info.descricao && info.observacoes
-  ].filter(Boolean);
-  return partes.join('\n\n').slice(0, 24000);
-}
-
 // ─── abas ───────────────────────────────────────────────
 // Operação (página em foco, ações, atividade) e Configurações (servidor,
 // modelo, botões na página). O status fica acima das abas, visível nas duas.
@@ -516,6 +478,99 @@ document.getElementById('btnRefreshPage').addEventListener('click', async (event
 document.getElementById('btnTest').addEventListener('click', (event) => runAction(event.currentTarget, async () => {
   setStatus('Testando a conexão com o servidor Hermes…', 'info');
   await checkConnection({ announce: true });
+}));
+
+// ─── mapeamento sem preenchimento ────────────────────────
+const mappingCardEl = document.getElementById('mappingCard');
+const mappingListEl = document.getElementById('mappingList');
+const mappingCountEl = document.getElementById('mappingCount');
+const mappingHintEl = document.getElementById('mappingHint');
+
+function renderFieldMapping(fields, response) {
+  const mapped = new Map((response.results || []).map((item) => [item.fieldId, item]));
+  const unmatched = new Map((response.unmatched || []).map((item) => [item.id, item]));
+  const typeLabels = { text: 'Texto', textarea: 'Texto longo', select: 'Lista', combobox: 'Autocomplete', radio: 'Escolha única', checkbox: 'Checkbox', file: 'Arquivo' };
+  const rows = fields.map((field, index) => {
+    const result = mapped.get(field.id);
+    const missing = unmatched.get(field.id);
+    const row = document.createElement('article');
+    row.className = 'mapping-row';
+
+    const head = document.createElement('div');
+    head.className = 'mapping-row-head';
+    const question = document.createElement('span');
+    question.className = 'mapping-question';
+    question.textContent = field.question || `Campo ${index + 1}`;
+    const meta = document.createElement('span');
+    meta.className = 'mapping-meta';
+    meta.textContent = `${typeLabels[field.type] || field.type || 'Campo'}${field.required ? ' · obrigatório' : ''}`;
+    head.append(question, meta);
+    row.appendChild(head);
+
+    const state = document.createElement('span');
+    state.className = 'mapping-state';
+    state.dataset.state = result ? 'mapped' : 'unmatched';
+    state.textContent = result
+      ? `Mapeado${result.source ? ` · ${result.source}` : ''}`
+      : (missing && missing.reason) || 'Sem resposta correspondente';
+    row.appendChild(state);
+
+    if (result) {
+      const answer = document.createElement('textarea');
+      answer.className = 'mapping-answer';
+      answer.readOnly = true;
+      answer.value = result.type === 'file'
+        ? ((result.value === 'cover-letter' ? 'Carta de apresentação' : 'Currículo') + ' (arquivo do cofre, não anexado)')
+        : String(result.value ?? '');
+      answer.setAttribute('aria-label', `Resposta mapeada para ${field.question || `Campo ${index + 1}`}. Clique no texto para selecionar e copiar.`);
+      answer.title = 'O mapeamento não preencheu este campo. Clique no texto para selecioná-lo e copie, se desejar.';
+      answer.addEventListener('click', () => answer.select());
+      row.appendChild(answer);
+    } else {
+      const options = (field.options || []).map((option) => option.label).filter(Boolean);
+      if (options.length) {
+        const choices = document.createElement('span');
+        choices.className = 'mapping-options';
+        choices.textContent = `Opções: ${options.join(' · ')}`;
+        row.appendChild(choices);
+      }
+    }
+    return row;
+  });
+
+  mappingListEl.replaceChildren(...rows);
+  mappingCountEl.textContent = `${mapped.size}/${fields.length} mapeados`;
+  mappingHintEl.textContent = 'Somente análise: nada foi escrito na página. Clique na resposta para selecioná-la e copie para preencher manualmente apenas o campo desejado.';
+  mappingCardEl.hidden = false;
+}
+
+document.getElementById('btnMapFields').addEventListener('click', (event) => runAction(event.currentTarget, async () => {
+  const tab = await refreshPageTarget();
+  if (!tab) return setStatus('Nenhuma aba ativa foi encontrada.', 'error');
+  mappingCardEl.hidden = true;
+  mappingListEl.replaceChildren();
+
+  setStatus(`Preparando o mapeamento de “${tab.title || 'página em foco'}”…`, 'info');
+  if (!(await ensureContentScript(tab.id))) {
+    return setStatus('Não foi possível acessar esta página. Tente recarregá-la e execute novamente.', 'error');
+  }
+  const fieldsRes = await scanFormInAllFrames(tab.id);
+  if (!fieldsRes.fields.length) {
+    return setStatus('Nenhum campo preenchível foi encontrado nesta página ou modal aberto.', 'error');
+  }
+
+  addActivity(`${fieldsRes.fields.length} campo(s) detectado(s); consultando correspondências sem aplicar respostas.`, 'info');
+  const response = await sendToBackground({
+    type: 'MAP_FIELDS',
+    payload: { fields: fieldsRes.fields, contexto: fieldsRes.contexto || '' }
+  });
+  if (!response || !response.success) {
+    return setStatus((response && response.error) || 'Falha ao mapear os campos.', 'error');
+  }
+  renderFieldMapping(fieldsRes.fields, response);
+  for (const line of response.debugLogs || []) addActivity(line, 'info');
+  auditLog('map_fields', { total: fieldsRes.fields.length, mapeados: (response.results || []).length, sem_correspondencia: (response.unmatched || []).length });
+  setStatus(`Mapeamento concluído: ${(response.results || []).length} de ${fieldsRes.fields.length} campo(s) com correspondência. O formulário não foi alterado.`, 'success');
 }));
 
 document.getElementById('btnAutofill').addEventListener('click', (event) => runAction(event.currentTarget, async () => {
@@ -775,101 +830,6 @@ btnBatchCapture.addEventListener('click', async (event) => {
     );
   });
   syncBatchButtons();
-});
-
-document.getElementById('btnCv').addEventListener('click', (event) => runAction(event.currentTarget, async () => {
-  const tab = await refreshPageTarget();
-  if (!tab) return setStatus('Nenhuma aba ativa foi encontrada.', 'error');
-
-  // Um CV por vez: o card do anterior sai antes de começar
-  resultEl.hidden = true;
-  lastCv = null;
-
-  setStatus('Lendo os requisitos da vaga para gerar o currículo…', 'info');
-  // No LinkedIn a descrição carrega depois do resto da página; aqui vale esperar
-  const info = await extractJobInfo(tab.id, { aguardarDescricao: true });
-  const vagaTexto = buildVagaTexto(info);
-  const totalTexto = vagaTexto.length + (info.pagina || '').length;
-  addActivity(
-    `Conteúdo enviado ao Hermes: ${totalTexto} caracteres ` +
-    `(trecho principal via ${info.fonte || 'metadados'}` +
-    `${info.skills && info.skills.length ? `, ${info.skills.length} skill(s) declarada(s)` : ''}).`,
-    totalTexto < 600 ? 'info' : 'success'
-  );
-  if (totalTexto < 600) {
-    addActivity('Pouco texto na página — a personalização tende a ficar genérica. Abra a descrição completa da vaga e reanalise.', 'info');
-  }
-  setStatus('Gerando um currículo personalizado…', 'info');
-  const res = await sendToBackground({
-    type: 'GENERATE_CV',
-    payload: {
-      vaga: vagaTexto,
-      // Dica de idioma (lang da página); quem decide é a detecção do servidor pela vaga
-      idioma: info.idioma || undefined,
-      empresa: info.empresa,
-      cargo: info.titulo,
-      url: info.url,
-      descricao: info.descricao,
-      requisitos: info.requisitos,
-      skills: info.skills || [],
-      pagina: info.pagina,        // texto integral da página, qualquer que seja o site
-      paginacao: CV_PAGINACAO
-    }
-  });
-
-  const data = res && res.success ? res.data : null;
-  const filename = (res && res.filename) || (data && data.pdf ? String(data.pdf).split('/').pop() : '');
-  if (!data || !filename) {
-    setStatus((res && res.error) || 'Não foi possível gerar o currículo.', 'error');
-    return;
-  }
-
-  // O background monta a URL com o mesmo apiUrl que usou na chamada
-  const { apiUrl: apiUrlSalvo } = await chrome.storage.local.get('apiUrl');
-  const base = (apiUrlSalvo || apiUrlInput.value.trim() || 'http://127.0.0.1:8790').replace(/\/$/, '');
-  const fileUrl = (res && res.download_url) || `${base}/cvs/${encodeURIComponent(filename)}`;
-  lastCv = { fileUrl, filename };
-  resultNameEl.textContent = filename;
-  resultEl.hidden = false;
-
-  // O que o servidor fez — fica no terminal e no log de auditoria
-  if (data.idioma) addActivity(`Idioma detectado pelo Hermes: ${data.idioma}.`, 'info');
-  if (data.modelo || typeof data.duracao_ms === 'number') {
-    const segundos = typeof data.duracao_ms === 'number' ? ` · ${Math.round(data.duracao_ms / 1000)} s` : '';
-    addActivity(`Modelo: ${data.modelo || 'padrão do servidor'}${segundos}.`, 'info');
-  }
-  if (Array.isArray(data.top_skills) && data.top_skills.length) {
-    addActivity(`Skills priorizadas: ${data.top_skills.slice(0, 8).join(', ')}.`, 'info');
-  }
-  if (typeof data.paginas === 'number') addActivity(`PDF com ${data.paginas} página${data.paginas === 1 ? '' : 's'}${data.tamanho_pagina ? ` (${data.tamanho_pagina})` : ''}.`, data.paginas === 1 ? 'success' : 'error');
-  auditLog('cv_resultado', {
-    filename, paginas: data.paginas, tamanho_pagina: data.tamanho_pagina, idioma: data.idioma,
-    reescrito: data.reescrito, fallback_motivo: data.fallback_motivo, modelo: data.modelo, duracao_ms: data.duracao_ms
-  });
-
-  if (data.reescrito === false) {
-    setStatus(`Currículo gerado SEM personalização por IA (motivo: ${data.fallback_motivo || 'não informado'}). Revise antes de enviar.`, 'error');
-  } else if (typeof data.paginas === 'number' && data.paginas !== 1) {
-    setStatus(`Currículo gerado com ${data.paginas} páginas — o pedido era página única. Abra e confira.`, 'error');
-  } else {
-    setStatus('Currículo gerado. Use Abrir para conferir e Baixar para salvar.', 'success');
-  }
-}));
-
-document.getElementById('btnOpenCv').addEventListener('click', () => {
-  if (!lastCv) return;
-  chrome.tabs.create({ url: lastCv.fileUrl });
-  addActivity('Currículo aberto em uma nova aba.', 'success');
-});
-
-document.getElementById('btnDownloadCv').addEventListener('click', async () => {
-  if (!lastCv) return;
-  try {
-    await chrome.downloads.download({ url: lastCv.fileUrl, filename: lastCv.filename, saveAs: true });
-    addActivity('Escolha onde salvar o currículo.', 'success');
-  } catch (err) {
-    setStatus(`Não foi possível baixar o currículo: ${err.message}`, 'error');
-  }
 });
 
 document.getElementById('btnCopyLog').addEventListener('click', async () => {
